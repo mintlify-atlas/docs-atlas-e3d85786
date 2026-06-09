@@ -1,5 +1,5 @@
 ---
-title: "Authentication API Endpoints — POST /api/auth"
+title: "Authentication Endpoints — /api/auth Routes Reference"
 sidebarTitle: "Auth Endpoints"
 description: "All /api/auth endpoints: registration with email verification, login, logout, Google OAuth, profile completion, and password recovery."
 ---
@@ -21,6 +21,10 @@ POST /api/auth/enviar-codigo-registro   ← Step 1: request verification code
 POST /api/auth/verificar-registro       ← Step 2: verify code → account created
 POST /api/auth/reenviar-codigo-registro ← Resend code (3-minute cooldown)
 ```
+
+<Note>
+  `POST /api/auth/registro` is present in the router but is a deprecated stub. It always returns `HTTP 400` with the message `"Usa el flujo de verificación por email: /enviar-codigo-registro → /verificar-registro"`. Do not use this route — use the two-step flow documented below.
+</Note>
 
 ---
 

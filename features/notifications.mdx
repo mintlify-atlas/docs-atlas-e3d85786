@@ -1,7 +1,7 @@
 ---
-title: "Real-Time Notifications with Socket.io"
+title: "Real-Time Notifications and Presence Tracking with Socket.io"
 sidebarTitle: "Notifications"
-description: "Eco-It uses Socket.io to deliver real-time admin notifications for content moderation alerts, user bans, and online presence tracking."
+description: "Eco-It uses Socket.io for real-time admin moderation alerts, user ban events, and live online presence counters shared across all connected clients."
 ---
 
 Eco-It's real-time notification layer is built on Socket.io, attached to the same Express HTTP server that serves the REST API. Every authenticated client that opens the platform establishes a persistent WebSocket connection that powers online presence counters, instant admin alerts for content moderation events, and live ban notifications — all without polling.
@@ -20,6 +20,8 @@ export const io = new Server(httpServer, {
   cors: {
     origin: [
       'http://localhost:5173',
+      'http://localhost:5174',
+      'http://localhost:5175',
       'https://eco-it.netlify.app'
     ],
     methods: ['GET', 'POST']
@@ -79,14 +81,11 @@ io.use((socket, next) => {
 ### Events Emitted to All Clients
 
 <CardGroup cols={2}>
-  <Card title="usuario:estado" icon="circle-user">
+  <Card title="usuario:estado" icon="circle-user" href="/features/notifications">
     Broadcast whenever a user comes online or goes fully offline. Payload: `{ userId: string, isOnline: boolean }`.
   </Card>
-  <Card title="usuarios:online" icon="users">
+  <Card title="usuarios:online" icon="users" href="/features/notifications">
     Broadcast on every connection and disconnection. Payload: `number` — the current count of unique online users.
-  </Card>
-  <Card title="map:updated" icon="map">
-    Broadcast by the map controller after any admin creates, updates, deletes, or toggles a recycling point. Payload: `{ puntos: PuntoReciclaje[] }`.
   </Card>
 </CardGroup>
 
@@ -95,13 +94,13 @@ io.use((socket, next) => {
 These events are sent exclusively to sockets in the `admins` room and are only triggered by EcoBot's content moderation pipeline.
 
 <CardGroup cols={2}>
-  <Card title="admin:alerta_lenguaje" icon="triangle-exclamation" color="#f59e0b">
+  <Card title="admin:alerta_lenguaje" icon="triangle-exclamation" href="/features/notifications">
     Fired when EcoBot detects inappropriate or sexual language in a text chat. The user is **reported but not automatically banned**. Payload includes `type`, `email`, `nombre`, `fecha`, `mensaje`, and the notification `id`.
   </Card>
-  <Card title="admin:alerta_obscena" icon="ban" color="#ef4444">
+  <Card title="admin:alerta_obscena" icon="ban" href="/features/notifications">
     Fired when Gemini detects obscene or sexually explicit content in an uploaded image. The user is **automatically banned for 3 days** before this event is emitted. Payload additionally includes the `imagen` base64 URL.
   </Card>
-  <Card title="admin:usuario_baneado" icon="user-slash" color="#ef4444">
+  <Card title="admin:usuario_baneado" icon="user-slash" href="/features/notifications">
     Fired immediately after `admin:alerta_obscena` to confirm the automatic ban was applied. Payload mirrors the `Notification` document: `type`, `email`, `nombre`, `adminName` (`"Sistema Automático"`), `dias` (`3`), `fecha`, `mensaje`, and `id`.
   </Card>
 </CardGroup>
@@ -147,13 +146,13 @@ All moderation events are persisted to MongoDB using the `Notification` model (`
 Administrators can query, acknowledge, and delete notifications through the following REST endpoints. All require a valid JWT with `admin` or `superadmin` role.
 
 <CardGroup cols={3}>
-  <Card title="GET /api/admin/notifications" icon="bell">
+  <Card title="GET /api/admin/notifications" icon="bell" href="/admin/overview">
     Returns all stored notifications, sorted by date descending.
   </Card>
-  <Card title="PATCH /api/admin/notifications/mark-read" icon="check">
+  <Card title="PATCH /api/admin/notifications/mark-read" icon="check" href="/admin/overview">
     Marks one or more notifications as read by adding the requesting admin's user ID to the `readBy` array.
   </Card>
-  <Card title="DELETE /api/admin/notifications/:id" icon="trash">
+  <Card title="DELETE /api/admin/notifications/:id" icon="trash" href="/admin/overview">
     Permanently deletes a single notification from the database.
   </Card>
 </CardGroup>

@@ -1,7 +1,7 @@
 ---
-title: "EcoBot: AI-Powered Recycling Assistant"
+title: "EcoBot: Eco-It's AI-Powered Recycling Chat Assistant"
 sidebarTitle: "EcoBot AI"
-description: "EcoBot is an AI chat assistant specialized in Colombian recycling regulations, with streaming responses, multi-turn chat history, and image-based waste identification."
+description: "EcoBot streams AI recycling guidance in Spanish via SSE, storing multi-turn chat history and analyzing waste images using the Colombian bin color system."
 ---
 
 EcoBot is Eco-It's conversational AI assistant, purpose-built to answer questions about recycling and environmental sustainability in the Colombian context. It refuses all off-topic requests and enforces Colombia's national color-coded bin system in every response — **White** (Blanco) for recyclables such as plastic, glass, and metals; **Black** (Negro) for non-recyclables like used paper towels and dirty napkins; and **Green** (Verde) for organic waste such as food scraps. EcoBot never uses Markdown formatting in its replies and always responds in Spanish.
@@ -11,10 +11,10 @@ EcoBot is Eco-It's conversational AI assistant, purpose-built to answer question
 EcoBot is backed by two models, accessed through the OpenRouter API.
 
 <CardGroup cols={2}>
-  <Card title="openrouter/free" icon="bolt">
+  <Card title="openrouter/free" icon="bolt" href="/api/ai-endpoints">
     The primary model used for all text-based conversations. Requests fall back automatically when the quota is exhausted.
   </Card>
-  <Card title="google/gemini-2.5-flash-lite" icon="image">
+  <Card title="google/gemini-2.5-flash-lite" icon="image" href="/api/ai-endpoints">
     The fallback model for text queries when `openrouter/free` hits a rate limit or quota error. Also the **exclusive** model used for all image analysis requests due to its multimodal capabilities.
   </Card>
 </CardGroup>
@@ -26,16 +26,16 @@ The fallback logic inspects HTTP status codes `429` and `402`, as well as error 
 Every conversation is stored as a `Chat` document in MongoDB, scoped to the authenticated user. Each chat holds a `title` (derived from the first 40 characters of the opening question) and an array of `mensajes` (messages) with `role` (`user` or `bot`) and `content` fields. A hard cap of **50 chats per user** is enforced automatically — when the limit is exceeded, the oldest chats are deleted.
 
 <CardGroup cols={2}>
-  <Card title="GET /api/ai/chats" icon="list">
+  <Card title="GET /api/ai/chats" icon="list" href="/api/ai-endpoints">
     Returns all chats for the authenticated user, sorted newest first. Includes `_id`, `title`, and `updatedAt`.
   </Card>
-  <Card title="GET /api/ai/chats/:id" icon="magnifying-glass">
+  <Card title="GET /api/ai/chats/:id" icon="magnifying-glass" href="/api/ai-endpoints">
     Returns the full message history of a single chat by its ID.
   </Card>
-  <Card title="DELETE /api/ai/chats/:id" icon="trash">
+  <Card title="DELETE /api/ai/chats/:id" icon="trash" href="/api/ai-endpoints">
     Permanently deletes a single chat belonging to the authenticated user.
   </Card>
-  <Card title="DELETE /api/ai/chats" icon="trash-can">
+  <Card title="DELETE /api/ai/chats" icon="trash-can" href="/api/ai-endpoints">
     Permanently deletes **all** chats belonging to the authenticated user.
   </Card>
 </CardGroup>
@@ -69,7 +69,7 @@ Content-Type: application/json
 
 The server responds with `Content-Type: text/event-stream`. The first SSE event always carries the `chatId` so the client can associate subsequent chunks with the session:
 
-```
+```text
 data: {"chatId":"664f1a2b3c4d5e6f7a8b9c0d"}
 
 data: {"content":"Las botellas PET (código 1) son altamente reciclables."}

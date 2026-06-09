@@ -1,7 +1,7 @@
 ---
-title: "Contact Form API Endpoint — POST /api/contact"
+title: "Contact Form API Endpoint — /api/contact Reference"
 sidebarTitle: "Contact Endpoint"
-description: "The /api/contact endpoint accepts contact form submissions from any user (logged in or guest) and sends an email notification."
+description: "The /api/contact endpoint accepts contact form submissions from registered users and guests alike, then delivers a branded email to the admin inbox."
 ---
 
 The `/api/contact` endpoint is the single entry point for all contact form submissions on the Eco-It platform. It is fully public — no authentication token is required — meaning both registered users and unauthenticated visitors (guests) can reach out to the Eco-It team. When a submission is received, the server validates the input, renders a branded HTML email template, and delivers it to the configured admin inbox via Gmail SMTP using Nodemailer. The response is intentionally simple: a success flag and a friendly message.
@@ -150,7 +150,7 @@ For example: `[Eco-It] Soporte técnico — Valentina Rojas`.
 ---
 
 <Note>
-  Email delivery is handled by the **emailService** utility, which creates a Nodemailer transporter configured for **Gmail SMTP**. The sending address and password are read from the `EMAIL_USER` and `EMAIL_PASS` environment variables at runtime. The destination admin address defaults to `ecoit4167@gmail.com` and can be overridden with the `ADMIN_EMAIL` environment variable.
+  Email delivery is handled by a **Nodemailer** transporter configured for **Gmail SMTP**, created directly inside the contact controller. The sending address and password are read from the `EMAIL_USER` and `EMAIL_PASS` environment variables at runtime. The destination admin address defaults to `ecoit4167@gmail.com` and can be overridden with the `ADMIN_EMAIL` environment variable.
 </Note>
 
 <Warning>

@@ -1,7 +1,7 @@
 ---
-title: "Environment Variables Reference for Eco-It"
+title: "Environment Variables Reference — Eco-It Configuration"
 sidebarTitle: "Environment Variables"
-description: "All backend and frontend environment variables for Eco-It: MongoDB, JWT, Google OAuth, Cloudinary, OpenRouter, and CORS configuration."
+description: "All backend and frontend environment variables for Eco-It: MongoDB, JWT, Google OAuth, Cloudinary, email service, OpenRouter, and CORS configuration."
 ---
 
 Eco-It splits its configuration across two environments: the **backend** (Node.js/Express) reads variables through [dotenv](https://github.com/motdotla/dotenv), which loads a `.env` file located in the `backend/` directory at startup. The **frontend** (React + Vite) uses Vite's built-in environment variable system — only variables prefixed with `VITE_` are exposed to browser code. Understanding which variables belong to which layer, and why each one is required, is essential before running Eco-It locally or deploying it to production.
@@ -46,6 +46,14 @@ These variables are loaded by `dotenv` in `backend/index.js` before any other mo
 
 <ParamField path="CLOUDINARY_API_SECRET" type="string" required>
   Cloudinary API secret. Treat this like a password — it allows signed upload and management operations on your Cloudinary account.
+</ParamField>
+
+<ParamField path="EMAIL_USER" type="string" required>
+  Gmail address used by `backend/utils/emailService.js` as the Nodemailer SMTP sender. This account must have an **App Password** configured (standard Gmail passwords are rejected by Google's SMTP when 2-Step Verification is enabled). Example: `ecoit.system@gmail.com`.
+</ParamField>
+
+<ParamField path="EMAIL_PASS" type="string" required>
+  Gmail App Password for the account specified in `EMAIL_USER`. Generate one in **Google Account → Security → App passwords**. Used as the SMTP authentication credential when sending welcome emails and password-recovery codes via `smtp.gmail.com:587`.
 </ParamField>
 
 <ParamField path="OPENROUTER_API_KEY" type="string" required>
@@ -98,6 +106,10 @@ FRONT_URL=http://localhost:5173
 CLOUDINARY_CLOUD_NAME=your_cloud_name
 CLOUDINARY_API_KEY=123456789012345
 CLOUDINARY_API_SECRET=abcdefghijklmnopqrstuvwxyz012345
+
+# ── Email (Nodemailer / Gmail SMTP) ─────────────────────────
+EMAIL_USER=ecoit.system@gmail.com
+EMAIL_PASS=xxxx xxxx xxxx xxxx
 
 # ── OpenRouter (EcoBot) ─────────────────────────────────────
 OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

@@ -1,5 +1,5 @@
 ---
-title: "Deploying Eco-It to Railway and Netlify"
+title: "Deploying Eco-It — Railway Backend and Netlify Frontend"
 sidebarTitle: "Deployment"
 description: "Deploy the Eco-It backend to Railway and the frontend React SPA to Netlify, with CORS, redirects, and environment variable configuration."
 ---
@@ -99,6 +99,8 @@ Railway detects Node.js projects automatically and runs the `start` script from 
     CLOUDINARY_CLOUD_NAME=<your-cloud-name>
     CLOUDINARY_API_KEY=<your-api-key>
     CLOUDINARY_API_SECRET=<your-api-secret>
+    EMAIL_USER=<your-gmail-address>
+    EMAIL_PASS=<your-gmail-app-password>
     OPENROUTER_API_KEY=<your-openrouter-key>
     ```
 
@@ -209,6 +211,10 @@ FRONT_URL=https://eco-it.netlify.app
 CLOUDINARY_CLOUD_NAME=<your-cloud-name>
 CLOUDINARY_API_KEY=<your-api-key>
 CLOUDINARY_API_SECRET=<your-api-secret>
+
+# ── Email (Nodemailer / Gmail SMTP) ─────────────────────────
+EMAIL_USER=<your-gmail-address>
+EMAIL_PASS=<your-gmail-app-password>
 
 # ── OpenRouter (EcoBot) ─────────────────────────────────────
 OPENROUTER_API_KEY=sk-or-v1-<your-openrouter-key>

@@ -87,12 +87,12 @@ The authentication system depends on the following environment variables being s
   Gmail app password (not the account password) for the `EMAIL_USER` account.
 </ParamField>
 
-<ParamField body="GOOGLE_CLIENT_ID" type="string">
-  OAuth 2.0 Client ID from the Google Cloud Console. Required only for Google OAuth.
+<ParamField body="CLIENT_ID" type="string">
+  OAuth 2.0 Client ID from the Google Cloud Console. Required only for Google OAuth. Note: the backend reads this as `CLIENT_ID`, not `GOOGLE_CLIENT_ID`.
 </ParamField>
 
-<ParamField body="GOOGLE_CLIENT_SECRET" type="string">
-  OAuth 2.0 Client Secret from the Google Cloud Console. Required only for Google OAuth.
+<ParamField body="CLIENT_SECRET" type="string">
+  OAuth 2.0 Client Secret from the Google Cloud Console. Required only for Google OAuth. Note: the backend reads this as `CLIENT_SECRET`, not `GOOGLE_CLIENT_SECRET`.
 </ParamField>
 
 <ParamField body="FRONT_URL" type="string">
@@ -115,7 +115,7 @@ The authentication system depends on the following environment variables being s
   <Card title="Password Recovery" icon="lock-open" href="/auth/password-recovery">
     Reset a forgotten password with a 3-step email verification flow: request code, verify code, set new password.
   </Card>
-  <Card title="Auth Middleware" icon="shield-halved" href="/auth/overview#token-storage-and-transmission">
+  <Card title="Auth Middleware" icon="shield-halved" href="/auth/overview">
     All protected routes require `Authorization: Bearer <token>`. Banned users are blocked at the middleware layer.
   </Card>
 </CardGroup>

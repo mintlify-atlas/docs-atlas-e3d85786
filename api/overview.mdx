@@ -1,5 +1,5 @@
 ---
-title: "Eco-It REST API Reference Overview"
+title: "Eco-It API: Route Groups, Authentication, and Rate Limits"
 sidebarTitle: "Overview"
 description: "Eco-It exposes a REST API at /api with 7 route groups covering auth, users, AI, maps, admin, carousel, and contact. All responses are JSON."
 ---
@@ -21,7 +21,7 @@ All CORS-allowed origins are explicitly whitelisted. In development the accepted
 
 ## Response Shape
 
-Every Eco-It API response is JSON. Successful responses include a `success: true` field alongside the relevant data payload. Error responses include a descriptive `error` or `message` string. The two base shapes are:
+Every Eco-It API response is JSON. Successful responses include a `success: true` field alongside the relevant data payload. Error responses carry a human-readable description in either a `message`, `mensaje`, or `error` field depending on the handler — always check the specific endpoint reference for the exact key. The two base shapes are:
 
 ```json Successful response
 {
@@ -30,9 +30,9 @@ Every Eco-It API response is JSON. Successful responses include a `success: true
 }
 ```
 
-```json Error response
+```json Error response (auth middleware)
 {
-  "error": "Human-readable error description"
+  "message": "Human-readable error description"
 }
 ```
 

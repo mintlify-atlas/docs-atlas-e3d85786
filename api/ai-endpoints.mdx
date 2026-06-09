@@ -1,10 +1,10 @@
 ---
-title: "EcoBot AI API Endpoints — POST /api/ai"
+title: "EcoBot AI API Endpoints — /api/ai Routes Reference"
 sidebarTitle: "AI Endpoints"
-description: "EcoBot API endpoints: streaming text chat, image analysis, and chat history CRUD. All endpoints require JWT authentication."
+description: "EcoBot AI endpoints: streaming SSE text chat, Gemini-powered image analysis, and full chat history CRUD. All routes require JWT authentication."
 ---
 
-EcoBot is Eco-It's conversational AI assistant, specialised exclusively in recycling and environmental sustainability in the Colombian context. It is powered by [OpenRouter](https://openrouter.ai) using **Google Gemini 2.5 Flash Lite** as the primary model, with an automatic fallback to `openrouter/free` when quotas are available. All endpoints under `/api/ai` require a valid JWT and apply the `verificarToken` middleware — unauthenticated requests receive `401 Unauthorized`.
+EcoBot is Eco-It's conversational AI assistant, specialised exclusively in recycling and environmental sustainability in the Colombian context. It is powered by [OpenRouter](https://openrouter.ai) using `openrouter/free` as the primary model, with an automatic fallback to **Google Gemini 2.5 Flash Lite** (`google/gemini-2.5-flash-lite`) when the free-model quota is exhausted. All endpoints under `/api/ai` require a valid JWT and apply the `verificarToken` middleware — unauthenticated requests receive `401 Unauthorized`.
 
 <Warning>
   EcoBot enforces a strict content policy. Inappropriate language in chat triggers an admin alert. Sending obscene images results in an **automatic 3-day account ban**. All policy violations are stored as admin notifications and broadcast via Socket.IO.
@@ -198,7 +198,7 @@ Returns a lightweight list of all the user's chats, sorted from most recently up
   Array of chat summary objects.
 </ResponseField>
 
-<ResponseField name="[]._ id" type="string">
+<ResponseField name="[]._id" type="string">
   MongoDB `_id` of the chat.
 </ResponseField>
 

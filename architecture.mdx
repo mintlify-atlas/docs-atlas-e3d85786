@@ -15,7 +15,7 @@ Eco-It/                          ← repository root
 ├── pnpm-workspace.yaml          ← workspace manifest (backend, frontend)
 ├── package.json                 ← root scripts + concurrently devDep
 │
-├── backend/                     ← Express 5 API workspace
+├── backend/                     ← Express 4 API workspace
 │   ├── index.js                 ← application entry point
 │   ├── controllers/             ← route handler logic
 │   ├── middlewares/             ← auth, limiters, validation
@@ -48,7 +48,7 @@ The root-level scripts delegate to each workspace:
 
 ## Backend
 
-The backend is a **Node.js / Express** HTTP server that also hosts a Socket.io WebSocket server on the same port. Both are attached to a shared `httpServer` instance created by Node's built-in `http.createServer`.
+The backend is a **Node.js / Express 4** HTTP server that also hosts a Socket.io WebSocket server on the same port. Both are attached to a shared `httpServer` instance created by Node's built-in `http.createServer`.
 
 ### Middleware Stack
 
@@ -69,7 +69,7 @@ Requests pass through the following middleware in order before reaching any rout
 
 Eco-It implements two parallel authentication strategies via **Passport.js**:
 
-- **Local strategy** (`passport-local-mongoose`) — email + password login with bcrypt hashing via `bcryptjs`.
+- **Local strategy** — email + password login. Credentials are verified directly using `bcryptjs.compare` in `controllers/loginController.js`; the `User` model stores passwords pre-hashed via a `pre('save')` hook.
 - **Google OAuth 2.0** (`passport-google-oauth20`) — one-click sign-in via `setupGoogleAuth()` in `controllers/AutheticationGoogle.js`.
 
 After a successful login (either strategy), the server issues a signed **JWT** (`jsonwebtoken`) that the client stores and sends with every subsequent request in the `Authorization: Bearer <token>` header. The `authMiddleware.js` verifies this token before any protected route handler runs.
@@ -81,9 +81,9 @@ Socket.io connections are also authenticated: the middleware at the top of `io.u
 | Model | Collection | Purpose |
 |---|---|---|
 | `User` | `users` | Core user document — profile, role (`user`, `admin`, `superadmin`), OAuth data, last-seen timestamp |
-| `PuntoReciclaje` | `puntoreiclajs` | Verified recycling collection points with geolocation and material categories |
+| `PuntoReciclaje` | `puntoreciclajes` | Verified recycling collection points with geolocation and material categories |
 | `Chat` | `chats` | EcoBot conversation history linked to a user |
-| `Notification` | `notifications` | In-app notification records (read / unread state) |
+| `Notification` | `notifications` | Admin-action notification records (e.g., ban alerts, language warnings); tracks which admins have read each record via a `readBy` array; auto-expires after 7 days via a TTL index |
 | `AuditLog` | `auditlogs` | Timestamped record of admin actions for compliance |
 | `CarouselSlide` | `carouselslides` | Homepage carousel content managed by admins |
 | `PendingRegistration` | `pendingregistrations` | Temporary records for users mid-OAuth profile-completion flow |
@@ -156,16 +156,16 @@ Key page routes:
 ## Third-Party Integrations
 
 <CardGroup cols={2}>
-  <Card title="Cloudinary" icon="image">
+  <Card title="Cloudinary" icon="image" href="/configuration/environment-variables">
     User avatars and carousel images are uploaded through the Cloudinary SDK (`cloudinary` v2 on the backend, `@cloudinary/react` on the frontend). The backend utility at `utils/cloudinary.js` initializes the SDK with credentials from environment variables. Helmet's CSP explicitly allows image sources from `https://res.cloudinary.com`.
   </Card>
-  <Card title="OpenRouter / Google Gemini" icon="brain">
+  <Card title="OpenRouter / Google Gemini" icon="brain" href="/features/ecobot-ai">
     EcoBot AI uses the `@openrouter/sdk` to stream chat completions from Google Gemini. Requests are routed through OpenRouter's API endpoint so that the model can be swapped without changing application code. The AI router at `/api/ai` applies its own rate limiter on top of the global one to prevent prompt-flooding.
   </Card>
-  <Card title="Google OAuth 2.0" icon="google">
+  <Card title="Google OAuth 2.0" icon="google" href="/auth/google-oauth">
     `passport-google-oauth20` handles the OAuth handshake. After a successful callback, Eco-It either logs in an existing user or creates a `PendingRegistration` record and redirects the user to `/completar-perfil` to finish their profile before receiving a JWT.
   </Card>
-  <Card title="MongoDB Atlas" icon="database">
+  <Card title="MongoDB Atlas" icon="database" href="/configuration/deployment">
     In production, `MONGODB_URI` points to a MongoDB Atlas cluster. Mongoose 9 manages the connection lifecycle with automatic reconnection. In development, a local MongoDB instance works identically since the URI format is the same.
   </Card>
 </CardGroup>
@@ -263,7 +263,7 @@ The same allowlist is applied to both `cors()` middleware and the Socket.io serv
 
 ### NoSQL Injection Prevention
 
-Because `express-mongo-sanitize@2.2.0` cannot safely patch `req.query` in Express 5 (where query is read-only), Eco-It applies sanitization manually to `req.body` and `req.params` via an inline middleware:
+Rather than relying on `express-mongo-sanitize@2.2.0`'s automatic middleware (which attempts to patch `req.query`, a property that is read-only in some Express configurations), Eco-It applies sanitization manually to `req.body` and `req.params` via an inline middleware:
 
 ```js
 app.use((req, res, next) => {

@@ -1,7 +1,7 @@
 ---
-title: "Recycling Map API Endpoints — GET /api/map"
+title: "Recycling Map API Endpoints — /api/map Routes Reference"
 sidebarTitle: "Map Endpoints"
-description: "Public endpoint to fetch all active and visible recycling collection points for display on the Eco-It interactive Leaflet map."
+description: "Public GET endpoint returning all active, user-visible recycling collection points for the Eco-It interactive Leaflet map. No authentication required."
 ---
 
 The `/api/map` router exposes a single public endpoint that serves recycling collection point data for the Eco-It interactive Leaflet map. No authentication is required — the map is visible to all visitors of the platform. Only points that are both active (`activo: true`) and marked as user-visible (`visibleToUser: true`) are returned; internal or deactivated points are always excluded from this response.

@@ -1,7 +1,7 @@
 ---
 title: "User Profile API Endpoints — GET/PUT/DELETE /api/user"
 sidebarTitle: "User Endpoints"
-description: "Endpoints for reading, updating, and deleting a user profile, changing passwords, and fetching public recycling map points."
+description: "REST endpoints for authenticated users to read, update, and delete their profile, change their password, and fetch public recycling map points."
 ---
 
 The `/api/user` router exposes endpoints for authenticated users to manage their own profile, change their password, and permanently delete their account. It also hosts a public endpoint that serves recycling collection point data for the interactive map, and a mirror of the password-recovery flow for convenience on the client side.
@@ -224,8 +224,8 @@ Allows an authenticated user to change their own password by supplying the curre
   The user's current (existing) password in plain text.
 </ParamField>
 
-<ParamField body="nuevaPassword" type="string" required>
-  The desired new password. Minimum 6 characters (validation middleware enforces this; the User model requires at least 8 in production).
+<ParamField body="passwordNueva" type="string" required>
+  The desired new password. Minimum 8 characters (enforced by the controller before saving).
 </ParamField>
 
 **Response**
@@ -240,7 +240,7 @@ Allows an authenticated user to change their own password by supplying the curre
 curl -X PUT https://api.eco-it.app/api/user/cambiar-password \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{ "passwordActual": "MiClave2024!", "nuevaPassword": "MiClaveNueva2025!" }'
+  -d '{ "passwordActual": "MiClave2024!", "passwordNueva": "MiClaveNueva2025!" }'
 ```
 
 ```json
@@ -251,8 +251,8 @@ curl -X PUT https://api.eco-it.app/api/user/cambiar-password \
 
 | Condition | Status | Message |
 |-----------|--------|---------|
-| Either field missing | `400` | `"Debes proporcionar la contraseña actual y la nueva"` |
-| New password too short | `400` | `"La nueva contraseña debe tener al menos 8 caracteres"` |
+| `passwordActual` or `passwordNueva` missing | `400` | `"Debes proporcionar la contraseña actual y la nueva"` |
+| New password fewer than 8 characters | `400` | `"La nueva contraseña debe tener al menos 8 caracteres"` |
 | Current password incorrect | `401` | `"La contraseña actual es incorrecta"` |
 | User not found | `404` | `"Usuario no encontrado"` |
 

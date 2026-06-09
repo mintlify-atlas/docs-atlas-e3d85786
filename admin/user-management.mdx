@@ -7,7 +7,7 @@ description: "List, search, ban, unban, delete, and change roles for all registe
 The Eco-It user management system gives administrators complete visibility and control over every registered account. Admins can list all users, search and filter by role or status, apply temporary bans, lift bans early, and delete accounts entirely. Role promotion and demotion are reserved exclusively for superadmins. All write operations emit real-time Socket.io events so that affected users — and other connected admins — are notified instantly.
 
 <Warning>
-  Role changes (`PATCH /api/admin/users/:id/role`) are protected by the `soloSuperadmin` middleware and will return `403 Forbidden` for `admin`-role callers. Admins may only ban, unban, and delete users whose role is `user`. An admin cannot act on another admin or on a superadmin account.
+  Role changes (`PATCH /api/admin/users/:id/role`) are protected by the `soloSuperadmin` middleware and will return `403 Forbidden` for `admin`-role callers. No admin can change their own role.
 </Warning>
 
 ## User Model Fields
@@ -175,7 +175,7 @@ curl -X PATCH https://api.eco-it.co/api/admin/users/664f1a2b3c4d5e6f7a8b9c0d/ban
 ```
 
 <Note>
-  An admin cannot ban themselves (`req.usuario.id === id` returns `400`) or ban another admin or superadmin. The ban check also applies in the `verificarToken` middleware: if `banHasta` has passed by the time the user next authenticates, the ban is lifted automatically and the user regains access.
+  An admin cannot ban themselves (`req.usuario.id === id` returns `400`). The ban check also applies in the `verificarToken` middleware: if `banHasta` has passed by the time the user next authenticates, the ban is lifted automatically and the user regains access.
 </Note>
 
 ---
@@ -207,7 +207,7 @@ Authorization: Bearer <token>
 
 ### Delete a User
 
-Permanently removes the user document from MongoDB via `findByIdAndDelete`. Creates an audit log entry recording the deleted email. An admin cannot delete their own account or a superadmin account.
+Permanently removes the user document from MongoDB via `findByIdAndDelete`. Creates an audit log entry recording the deleted email. An admin cannot delete their own account.
 
 ```http
 DELETE /api/admin/users/:id

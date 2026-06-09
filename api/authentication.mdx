@@ -1,7 +1,7 @@
 ---
-title: "Authenticating Requests to the Eco-It API"
+title: "Eco-It API Authentication: JWT Tokens and Bearer Headers"
 sidebarTitle: "Authentication"
-description: "All protected Eco-It API endpoints require a JWT Bearer token in the Authorization header. Learn how to obtain and send tokens."
+description: "All protected Eco-It API endpoints require a valid JWT Bearer token in the Authorization header. Learn how to obtain tokens and send them."
 ---
 
 Eco-It uses **JSON Web Tokens (JWT)** for stateless authentication. When a user logs in successfully, the server signs and returns a token that must be attached to every subsequent request that accesses a protected resource. There are no sessions stored on the server for REST API calls — the token itself carries all necessary identity and role information.
@@ -96,6 +96,12 @@ Requests to protected endpoints that are missing the header, or that carry an ex
 }
 ```
 
+```json 401 – User not found
+{
+  "message": "Usuario no encontrado"
+}
+```
+
 ```json 401 – Token expired
 {
   "message": "Token expirado, inicia sesion nuevamente"
@@ -117,13 +123,13 @@ Every protected route applies the `verificarToken` middleware before its handler
     Reads the `Authorization` request header and extracts the token from `Bearer <token>`. If the header is absent or does not start with `Bearer`, the middleware immediately returns `401 { message: "Token requerido" }`.
   </Step>
   <Step title="Verify the signature">
-    Calls `jwt.verify(token, process.env.JWT_SECRET)` to validate the signature and check expiry. An expired token returns `401`; a tampered token returns `401` with `"Token invalido"`.
+    Calls `jwt.verify(token, process.env.JWT_SECRET)` to validate the signature and check expiry. A `TokenExpiredError` returns `401 { message: "Token expirado, inicia sesion nuevamente" }`; a `JsonWebTokenError` (tampered or malformed token) returns `401 { message: "Token invalido" }`.
   </Step>
   <Step title="Fetch the live user record">
-    Uses the `id` from the decoded payload to query MongoDB for the current user document (`password` field excluded). This ensures that any changes made to the user's account since the token was issued — such as role updates or bans — are reflected immediately without waiting for the token to expire.
+    Uses the `id` from the decoded payload to query MongoDB for the current user document (`password` field excluded). If no matching user is found, the middleware returns `401 { message: "Usuario no encontrado" }`. This ensures that any changes made to the user's account since the token was issued — such as role updates or bans — are reflected immediately without waiting for the token to expire.
   </Step>
   <Step title="Check ban status">
-    If the user's `status` is `'banned'` **and** the current time is before `banHasta`, the middleware returns `403` with the ban details. If the ban period has already passed, it is automatically lifted and the request proceeds normally.
+    If the user's `status` is `'banned'` **and** the current time is before `banHasta`, the middleware returns `403` with the ban details. If the ban period has already passed, it is automatically lifted (status set to `'active'`, `banHasta` and `banReason` cleared) and the request proceeds normally.
   </Step>
   <Step title="Attach user to request">
     The full user document is attached to `req.usuario`, making it available to all downstream route handlers and middleware.
@@ -187,44 +193,55 @@ const BASE_URL = import.meta.env.VITE_BACKEND_URL || '/api';
 export const AUTH_EXPIRED_EVENT = 'auth-expired';
 
 export const fetchAPI = async (endpoint, options = {}) => {
-  const fetchOptions = {
-    method: options.method || 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  };
+  try {
+    const fetchOptions = {
+      method: options.method || 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    };
 
-  // Attach token from localStorage if present
-  const token = localStorage.getItem('token');
-  if (token) {
-    fetchOptions.headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  if (options.body) {
-    fetchOptions.body = options.body;
-  }
-
-  const response = await fetch(`${BASE_URL}${endpoint}`, fetchOptions);
-  const data = await response.json();
-
-  if (!response.ok) {
-    // Dispatch DOM event on 401 so the app can log the user out automatically
-    if (response.status === 401 && !options.skipAuthError) {
-      window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
-    }
-    // Dispatch ban event on 403 with banned flag
-    if (response.status === 403 && data.banned) {
-      window.dispatchEvent(new CustomEvent('USER_BANNED', { detail: data }));
+    // Attach token from localStorage if present
+    const token = localStorage.getItem('token');
+    if (token) {
+      fetchOptions.headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const error = new Error(data.message || data.mensaje || data.error || 'Error en la petición');
-    error.data = data;
-    error.status = response.status;
+    if (options.body) {
+      fetchOptions.body = options.body;
+    }
+
+    const response = await fetch(`${BASE_URL}${endpoint}`, fetchOptions);
+    const data = await response.json();
+
+    if (!response.ok) {
+      // Dispatch DOM event on 401 so the app can log the user out automatically
+      if (response.status === 401 && !options.skipAuthError) {
+        window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+      }
+      // Dispatch ban event on 403 with banned flag
+      if (response.status === 403 && data.banned) {
+        window.dispatchEvent(new CustomEvent('USER_BANNED', { detail: data }));
+      }
+
+      const error = new Error(data.message || data.mensaje || data.error || 'Error en la petición');
+      error.data = data;
+      error.status = response.status;
+      throw error;
+    }
+
+    return data;
+  } catch (error) {
+    // Silence expected errors that should not pollute the client console
+    const isExpectedAuthError = options.skipAuthError && error.status === 401;
+    const isBannedError = error.status === 403;
+
+    if (!isExpectedAuthError && !isBannedError) {
+      console.error('Error en fetchAPI:', error);
+    }
     throw error;
   }
-
-  return data;
 };
 ```
 

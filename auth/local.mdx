@@ -31,7 +31,7 @@ Registration is a two-request handshake. The first request sends a verification 
     </ParamField>
 
     <ParamField body="password" type="string" required>
-      Plain-text password. Minimum 8 characters (enforced by the `User` model schema). The backend hashes it with bcrypt (salt rounds: 10) before storing in `PendingRegistration`.
+      Plain-text password. Minimum 8 characters (enforced by the `User` model schema). The backend hashes it with bcrypt (salt rounds: 12) before storing in `PendingRegistration`.
     </ParamField>
 
     <ParamField body="telefono" type="string" required>
@@ -269,7 +269,7 @@ userSchema.pre('save', async function () {
 
 ## Profile completion (for Google OAuth users)
 
-Google OAuth users are created without `apellido`, `edad`, or `telefono`, and their `perfilCompleto` flag is set to `false`. After their first login they must complete their profile before accessing the full platform. This endpoint is also available to any authenticated user who needs to update these fields.
+Google OAuth users are created without `edad` or `telefono`, and `apellido` is only set when Google returns a family name. Their `perfilCompleto` flag is always set to `false` at creation. After their first login they must complete their profile before accessing the full platform. This endpoint is also available to any authenticated user who needs to update these fields.
 
 **Endpoint:** `PUT /api/auth/completar-perfil`
 

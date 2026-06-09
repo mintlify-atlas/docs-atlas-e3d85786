@@ -1,7 +1,7 @@
 ---
-title: "Interactive Recycling Map for Colombian Cities"
+title: "Eco-It Interactive Recycling Map for Colombian Cities"
 sidebarTitle: "Recycling Map"
-description: "Eco-It's recycling map displays active collection points on an interactive Leaflet map, filterable by type, with route planning and favorites."
+description: "Eco-It's Leaflet recycling map shows active Colombian collection points filterable by type, with live Socket.io updates and optional route planning."
 ---
 
 The Eco-It recycling map gives every visitor — logged in or not — an interactive view of active waste-collection and recycling points in their city. It is built with Leaflet.js, embedded in the React SPA, and renders custom SVG pin markers for each point type. Map data is served from a public REST endpoint so no authentication is required to browse the map, though route planning and favorites require a user account.
@@ -11,19 +11,19 @@ The Eco-It recycling map gives every visitor — logged in or not — an interac
 Every recycling point stored in the database belongs to exactly one of the following five categories, defined as an enum on the `PuntoReciclaje` Mongoose model:
 
 <CardGroup cols={3}>
-  <Card title="recycling" icon="recycle" color="#22c55e">
+  <Card title="recycling" icon="recycle" href="/admin/map-management">
     A standard recycling drop-off point. Renders with a **green** pin on the map.
   </Card>
-  <Card title="ecobottle" icon="bottle-water" color="#84cc16">
+  <Card title="ecobottle" icon="bottle-water" href="/admin/map-management">
     An eco-bottle deposit station. Renders with a **lime** pin.
   </Card>
-  <Card title="truck" icon="truck" color="#14b8a6">
+  <Card title="truck" icon="truck" href="/admin/map-management">
     A scheduled collection truck stop. Renders with a **teal** pin.
   </Card>
-  <Card title="container" icon="trash" color="#10b981">
+  <Card title="container" icon="trash" href="/admin/map-management">
     A large waste container. Renders with an **emerald** pin.
   </Card>
-  <Card title="green_zone" icon="leaf" color="#4ade80">
+  <Card title="green_zone" icon="leaf" href="/admin/map-management">
     A designated green zone for organic or composting drop-off. Renders with a **light-green** pin.
   </Card>
 </CardGroup>
@@ -115,19 +115,19 @@ GET /api/map/points
 Administrators manage recycling points through a set of protected endpoints under `/api/admin/map/points`. All admin endpoints require a valid JWT with an `admin` or `superadmin` role.
 
 <CardGroup cols={2}>
-  <Card title="GET /api/admin/map/points" icon="list">
+  <Card title="GET /api/admin/map/points" icon="list" href="/admin/map-management">
     Returns **all** points regardless of `activo` or `visibleToUser` status. Used by the admin map management panel.
   </Card>
-  <Card title="POST /api/admin/map/points" icon="plus">
+  <Card title="POST /api/admin/map/points" icon="plus" href="/admin/map-management">
     Creates a new recycling point. Accepts a base64 image string which is automatically uploaded to Cloudinary and stored as a secure URL.
   </Card>
-  <Card title="PUT /api/admin/map/points/:id" icon="pen">
+  <Card title="PUT /api/admin/map/points/:id" icon="pen" href="/admin/map-management">
     Updates an existing point. If the `imagen` field is a new `data:image/...` base64 string, it is re-uploaded to Cloudinary.
   </Card>
-  <Card title="DELETE /api/admin/map/points/:id" icon="trash">
+  <Card title="DELETE /api/admin/map/points/:id" icon="trash" href="/admin/map-management">
     Permanently deletes a point from the database.
   </Card>
-  <Card title="PATCH /api/admin/map/points/:id/toggle" icon="toggle-on">
+  <Card title="PATCH /api/admin/map/points/:id/toggle" icon="toggle-on" href="/admin/map-management">
     Toggles the `activo` flag between `true` and `false` without deleting the point.
   </Card>
 </CardGroup>

@@ -47,7 +47,7 @@ The complete Google OAuth flow involves three parties: the Eco-It frontend, the 
     | New user (no matching `googleId` or `email`) | Create a new `User` document with `perfilCompleto: false`, send a welcome email, and authenticate. |
 
     <Info>
-      New Google users are created with `authProvider: 'google'` and without a `password`, `apellido`, `telefono`, or `edad`. The `apellido` field is set from `profile.name.familyName` when available, but `perfilCompleto` is always `false` for brand-new Google registrations until the user completes their profile.
+      New Google users are created with `authProvider: 'google'`, without a `password`, `telefono`, or `edad`. The `apellido` field is set from `profile.name.familyName` when Google provides it. `perfilCompleto` is always `false` for brand-new Google registrations until the user completes their profile.
     </Info>
   </Step>
 
@@ -122,15 +122,17 @@ The Google strategy is initialised in `backend/controllers/AutheticationGoogle.j
 
 ```js
 // From backend/controllers/AutheticationGoogle.js
-passport.use(new GoogleStrategy({
-  clientID:     process.env.CLIENT_ID,
-  clientSecret: process.env.CLIENT_SECRET,
-  callbackURL:  process.env.GOOGLE_CALLBACK_URL
-                || `${process.env.BACK_URL || 'http://localhost:3000'}/api/auth/google/callback`,
-  passReqToCallback: true
-}, async (req, accessToken, refreshToken, profile, done) => {
-  // find-or-create logic …
-}));
+export function setupGoogleAuth() {
+  passport.use(new GoogleStrategy({
+    clientID:     process.env.CLIENT_ID,
+    clientSecret: process.env.CLIENT_SECRET,
+    callbackURL:  process.env.GOOGLE_CALLBACK_URL
+                  || `${process.env.BACK_URL || 'http://localhost:3000'}/api/auth/google/callback`,
+    passReqToCallback: true
+  }, async (req, accessToken, refreshToken, profile, done) => {
+    // find-or-create logic …
+  }));
+}
 ```
 
 ## Required environment variables

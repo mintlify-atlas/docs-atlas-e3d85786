@@ -109,7 +109,7 @@ Authorization: Bearer <token>
 
 ### Create a Point
 
-Creates a new `PuntoReciclaje` document. If the `imagen` field contains a base64-encoded data URI, the controller uploads it to Cloudinary (folder `ecoit_map_points`) and stores the returned `secure_url` instead. After saving, emits `map:updated` to all clients with the refreshed list of active, visible points.
+Creates a new `PuntoReciclaje` document. If the `imagen` field is a non-empty string, the controller uploads it to Cloudinary (folder `ecoit_map_points`) and stores the returned `secure_url` instead. After saving, emits `map:updated` to all clients with the refreshed list of active, visible points.
 
 ```http
 POST /api/admin/map/points
@@ -140,7 +140,7 @@ Content-Type: application/json
 </ParamField>
 
 <ParamField body="imagen" type="string">
-  Either a Cloudinary URL (if you already have one) or a base64 data URI (e.g. `data:image/jpeg;base64,...`). The backend will upload data URIs to Cloudinary automatically.
+  A base64 data URI (e.g. `data:image/jpeg;base64,...`) to upload. Any non-empty value is uploaded to Cloudinary and the field is replaced with the resulting `secure_url`. Leave empty or omit to store no image.
 </ParamField>
 
 <ParamField body="activo" type="boolean" default="true">
@@ -293,11 +293,11 @@ Authorization: Bearer <token>
   **How it works:**
   1. The frontend reads the selected image file as a base64 data URI using `FileReader`.
   2. The data URI is sent in the `imagen` field of the create or update request body.
-  3. The `puntosController.js` detects the `data:image` prefix and calls `cloudinary.uploader.upload(imagen, { folder: "ecoit_map_points" })`.
+  3. For **create** (`POST`), any non-empty `imagen` value is passed to `cloudinary.uploader.upload(imagen, { folder: "ecoit_map_points" })`. For **update** (`PATCH`), the controller only uploads when the value starts with `data:image`; an existing Cloudinary URL is stored as-is.
   4. The `secure_url` from Cloudinary's response is stored in the `imagen` field of the database document.
   5. Subsequent reads return the Cloudinary CDN URL, which the React frontend renders via the `@cloudinary/react` `AdvancedImage` component for automatic WebP conversion and responsive quality.
 
-  If you supply a full Cloudinary URL (from a previous upload) in the `imagen` field, it is stored as-is without re-uploading.
+  When updating an existing point (`PATCH`), if you supply a full Cloudinary URL (from a previous upload) in the `imagen` field, the controller stores it as-is without re-uploading (it only uploads values that start with `data:image`). For new points (`POST`), any non-empty `imagen` value is uploaded to Cloudinary.
 </Note>
 
 ## Frontend Map Component

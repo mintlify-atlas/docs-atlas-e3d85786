@@ -1,7 +1,7 @@
 ---
-title: "Eco-Game: Educational WebGL Recycling Game"
+title: "Eco-Game: Eco-It's Unity WebGL Educational Recycling Game"
 sidebarTitle: "Eco-Game"
-description: "Eco-It includes a Unity WebGL game embedded in the platform that teaches recycling through gameplay, with leaderboards, achievements, and gamification points."
+description: "Eco-It embeds a Unity WebGL game at the /game route where players sort waste into Colombian color-coded bins to earn points and unlock achievements."
 ---
 
 Eco-Game is an interactive 3D recycling game built with Unity and exported as a WebGL application, embedded directly inside the Eco-It React SPA at the `/game` route. Players sort falling waste items into the correct Colombian color-coded bins, earning points for consecutive correct classifications and unlocking score multipliers for winning streaks. The game is designed to reinforce the same recycling knowledge promoted throughout the rest of the platform — in a format that is engaging for all ages.
@@ -14,7 +14,7 @@ The `/game` route is a **private route**. Users must be logged in with a valid J
 
 The Unity WebGL build is served as a static asset from the frontend's `public` directory, making it available at the `/eco-juego/` path in both development and production.
 
-```
+```text
 frontend/public/eco-juego/
 ├── index.html                          # Game entry point loaded by the iframe
 └── Build/
@@ -31,13 +31,13 @@ The `GameHero` component (`frontend/src/components/game/GameHero.jsx`) renders t
 The game toolbar rendered above the iframe provides three controls:
 
 <CardGroup cols={3}>
-  <Card title="Exit Game" icon="arrow-left">
+  <Card title="Exit Game" icon="arrow-left" href="/features/eco-game">
     Returns the user to the pre-game lobby screen without unloading the page. The iframe is unmounted to free memory.
   </Card>
-  <Card title="Restart" icon="rotate-left">
+  <Card title="Restart" icon="rotate-left" href="/features/eco-game">
     Reloads the iframe `src` attribute, triggering a full Unity runtime restart. Useful when the game enters an unrecoverable state.
   </Card>
-  <Card title="Fullscreen" icon="maximize">
+  <Card title="Fullscreen" icon="maximize" href="/features/eco-game">
     Calls the browser's Fullscreen API on the iframe container element. Supports `requestFullscreen`, `mozRequestFullScreen`, `webkitRequestFullscreen`, and `msRequestFullscreen` for cross-browser compatibility.
   </Card>
 </CardGroup>
@@ -47,10 +47,10 @@ The game toolbar rendered above the iframe provides three controls:
 Eco-It uses a platform-wide gamification system tied to each user's `puntos` field in the `User` MongoDB model. Correct classifications in the game award points, and the platform surfaces this progress through dedicated UI components on the game page:
 
 <CardGroup cols={2}>
-  <Card title="LeaderboardPreview" icon="trophy">
+  <Card title="LeaderboardPreview" icon="trophy" href="/features/eco-game">
     Displays the top-ranked users by total `puntos` accumulated, encouraging friendly competition between players.
   </Card>
-  <Card title="AchievementsPreview" icon="star">
+  <Card title="AchievementsPreview" icon="star" href="/features/eco-game">
     Shows unlocked and locked achievements based on recycling milestones, consecutive correct answers, and total games played.
   </Card>
 </CardGroup>
