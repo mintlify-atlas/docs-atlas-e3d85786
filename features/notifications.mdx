@@ -1,0 +1,207 @@
+---
+title: "Real-Time Notifications with Socket.io"
+sidebarTitle: "Notifications"
+description: "Eco-It uses Socket.io to deliver real-time admin notifications for content moderation alerts, user bans, and online presence tracking."
+---
+
+Eco-It's real-time notification layer is built on Socket.io, attached to the same Express HTTP server that serves the REST API. Every authenticated client that opens the platform establishes a persistent WebSocket connection that powers online presence counters, instant admin alerts for content moderation events, and live ban notifications — all without polling.
+
+## Server Setup
+
+The Socket.io server is created with `new Server(httpServer, { ... })` so that it shares the same port as the Express application. CORS is configured to allow connections from `localhost:5173`, `localhost:5174`, `localhost:5175`, and `https://eco-it.netlify.app`.
+
+```javascript
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+
+const httpServer = createServer(app);
+
+export const io = new Server(httpServer, {
+  cors: {
+    origin: [
+      'http://localhost:5173',
+      'https://eco-it.netlify.app'
+    ],
+    methods: ['GET', 'POST']
+  }
+});
+```
+
+The `io` instance is also stored on the Express `app` object (`app.set('io', io)`) so that any route handler or controller can emit events without importing the socket server directly.
+
+## Authentication Middleware
+
+Every incoming Socket.io connection must present a valid JWT during the handshake. The middleware reads the token from `socket.handshake.auth.token` or from the `Authorization` header, verifies it against `JWT_SECRET`, and attaches the decoded payload to `socket.usuario`. Connections without a valid token are rejected immediately with an `Authentication error`.
+
+```javascript
+io.use((socket, next) => {
+  const token =
+    socket.handshake.auth?.token ||
+    socket.handshake.headers?.authorization?.split(' ')[1];
+
+  if (!token) return next(new Error('Authentication error: Token required'));
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.usuario = decoded;
+    next();
+  } catch {
+    next(new Error('Authentication error: Invalid token'));
+  }
+});
+```
+
+## Connection Flow
+
+<Steps>
+  <Step title="Client emits usuario:conectado">
+    After the socket connects, the client emits the `usuario:conectado` event. The server extracts `userId` and `nombre` from the verified JWT payload already stored on `socket.usuario`.
+  </Step>
+  <Step title="Server tracks the user in usuariosConectados">
+    The server maintains a `Map<userId, { nombre, sockets: Set<socketId> }>` called `usuariosConectados`. Each entry holds a `Set` of socket IDs so that a user opening multiple browser tabs is counted only once.
+  </Step>
+  <Step title="Online status broadcast">
+    If this is the user's first socket connection (no existing entry in the map), the server emits `usuario:estado` to all clients to announce the user is now online, and updates the `ultimaConexion` timestamp in the MongoDB `User` document.
+  </Step>
+  <Step title="Admin room assignment">
+    The server queries the database for the connecting user's role. If the role is `admin` or `superadmin`, the socket is added to the `admins` Socket.io room, which is used as the exclusive target for all content moderation alerts.
+  </Step>
+  <Step title="Online count update">
+    `io.emit('usuarios:online', usuariosConectados.size)` is broadcast to every connected client so the UI can display the current online user count in real time.
+  </Step>
+  <Step title="Disconnect handling">
+    When a socket disconnects, its ID is removed from the user's `sockets` Set. If the Set becomes empty (all tabs closed), the user is removed from `usuariosConectados` and `usuario:estado` is emitted with `isOnline: false`.
+  </Step>
+</Steps>
+
+## Events Reference
+
+### Events Emitted to All Clients
+
+<CardGroup cols={2}>
+  <Card title="usuario:estado" icon="circle-user">
+    Broadcast whenever a user comes online or goes fully offline. Payload: `{ userId: string, isOnline: boolean }`.
+  </Card>
+  <Card title="usuarios:online" icon="users">
+    Broadcast on every connection and disconnection. Payload: `number` — the current count of unique online users.
+  </Card>
+  <Card title="map:updated" icon="map">
+    Broadcast by the map controller after any admin creates, updates, deletes, or toggles a recycling point. Payload: `{ puntos: PuntoReciclaje[] }`.
+  </Card>
+</CardGroup>
+
+### Events Emitted to the `admins` Room
+
+These events are sent exclusively to sockets in the `admins` room and are only triggered by EcoBot's content moderation pipeline.
+
+<CardGroup cols={2}>
+  <Card title="admin:alerta_lenguaje" icon="triangle-exclamation" color="#f59e0b">
+    Fired when EcoBot detects inappropriate or sexual language in a text chat. The user is **reported but not automatically banned**. Payload includes `type`, `email`, `nombre`, `fecha`, `mensaje`, and the notification `id`.
+  </Card>
+  <Card title="admin:alerta_obscena" icon="ban" color="#ef4444">
+    Fired when Gemini detects obscene or sexually explicit content in an uploaded image. The user is **automatically banned for 3 days** before this event is emitted. Payload additionally includes the `imagen` base64 URL.
+  </Card>
+  <Card title="admin:usuario_baneado" icon="user-slash" color="#ef4444">
+    Fired immediately after `admin:alerta_obscena` to confirm the automatic ban was applied. Payload mirrors the `Notification` document: `type`, `email`, `nombre`, `adminName` (`"Sistema Automático"`), `dias` (`3`), `fecha`, `mensaje`, and `id`.
+  </Card>
+</CardGroup>
+
+## Notification Model
+
+All moderation events are persisted to MongoDB using the `Notification` model (`backend/models/notification.js`). A TTL index automatically purges notifications after **7 days** (604,800 seconds).
+
+<ParamField body="type" type="string" required>
+  One of `alerta_lenguaje`, `alerta_obscena`, or `usuario_baneado`.
+</ParamField>
+
+<ParamField body="email" type="string">
+  Email address of the user who triggered the alert.
+</ParamField>
+
+<ParamField body="nombre" type="string">
+  Display name of the user who triggered the alert.
+</ParamField>
+
+<ParamField body="adminName" type="string">
+  Name of the admin who applied a manual ban, or `"Sistema Automático"` for auto-bans.
+</ParamField>
+
+<ParamField body="dias" type="number">
+  Duration of the ban in days. Present only on `usuario_baneado` notifications.
+</ParamField>
+
+<ParamField body="mensaje" type="string">
+  Human-readable description of the event.
+</ParamField>
+
+<ParamField body="fecha" type="date">
+  Timestamp of the event. Defaults to `Date.now()`.
+</ParamField>
+
+<ParamField body="readBy" type="array">
+  Array of `User` ObjectIDs representing admins who have read the notification.
+</ParamField>
+
+## Admin Notifications API
+
+Administrators can query, acknowledge, and delete notifications through the following REST endpoints. All require a valid JWT with `admin` or `superadmin` role.
+
+<CardGroup cols={3}>
+  <Card title="GET /api/admin/notifications" icon="bell">
+    Returns all stored notifications, sorted by date descending.
+  </Card>
+  <Card title="PATCH /api/admin/notifications/mark-read" icon="check">
+    Marks one or more notifications as read by adding the requesting admin's user ID to the `readBy` array.
+  </Card>
+  <Card title="DELETE /api/admin/notifications/:id" icon="trash">
+    Permanently deletes a single notification from the database.
+  </Card>
+</CardGroup>
+
+## Client Connection Example
+
+Use the following pattern to connect a browser client to the Socket.io server with JWT authentication:
+
+```javascript
+import { io } from 'socket.io-client';
+
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+
+const socket = io(BACKEND_URL, {
+  auth: {
+    token: localStorage.getItem('token'), // JWT stored after login
+  },
+});
+
+// Announce presence once the connection is established
+socket.on('connect', () => {
+  socket.emit('usuario:conectado');
+});
+
+// Update online user count in the UI
+socket.on('usuarios:online', (count) => {
+  console.log(`Usuarios en línea: ${count}`);
+});
+
+// Track individual user status changes
+socket.on('usuario:estado', ({ userId, isOnline }) => {
+  console.log(`User ${userId} is now ${isOnline ? 'online' : 'offline'}`);
+});
+
+// Admin-only: listen for content moderation alerts
+socket.on('admin:alerta_lenguaje', (notification) => {
+  showAdminAlert(`⚠️ Lenguaje inapropiado de ${notification.nombre}`);
+});
+
+socket.on('admin:alerta_obscena', (notification) => {
+  showAdminAlert(`🚫 Imagen obscena de ${notification.nombre} — usuario baneado 3 días`);
+});
+
+socket.on('admin:usuario_baneado', (notification) => {
+  showAdminAlert(`🔒 ${notification.nombre} ha sido baneado por ${notification.dias} día(s)`);
+});
+```
+
+<Warning>
+  The Socket.io server rejects connections that do not provide a JWT token in the `auth` handshake object. If the token expires while the client is connected, the next reconnect attempt will also be rejected. Implement a reconnect handler that reads a fresh token from storage when `connect_error` is received.
+</Warning>

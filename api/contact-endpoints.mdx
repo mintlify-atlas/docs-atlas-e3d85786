@@ -1,0 +1,158 @@
+---
+title: "Contact Form API Endpoint — POST /api/contact"
+sidebarTitle: "Contact Endpoint"
+description: "The /api/contact endpoint accepts contact form submissions from any user (logged in or guest) and sends an email notification."
+---
+
+The `/api/contact` endpoint is the single entry point for all contact form submissions on the Eco-It platform. It is fully public — no authentication token is required — meaning both registered users and unauthenticated visitors (guests) can reach out to the Eco-It team. When a submission is received, the server validates the input, renders a branded HTML email template, and delivers it to the configured admin inbox via Gmail SMTP using Nodemailer. The response is intentionally simple: a success flag and a friendly message.
+
+<Info>
+  The endpoint identifies whether the sender is a registered user by the optional presence of a `userId` field in the request body. This distinction is reflected in the email as a coloured badge ("Usuario registrado" or "Invitado") but does not affect validation or delivery.
+</Info>
+
+---
+
+## POST /api/contact
+
+Validates the form payload, builds a styled HTML email, and dispatches it to the admin address defined in the `ADMIN_EMAIL` environment variable (fallback: `ecoit4167@gmail.com`). The `replyTo` header of the email is set to the sender's address so admins can reply directly from their inbox.
+
+**Auth:** None (public)
+
+```http
+POST /api/contact
+Content-Type: application/json
+```
+
+### Request Body
+
+<ParamField body="name" type="string" required>
+  Full name of the person sending the message. Must be a non-empty string after trimming whitespace. Displayed prominently in the email header.
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  Email address of the sender. Validated against the pattern `\S+@\S+\.\S+`. Used as the `replyTo` address so admins can respond directly. Must be non-empty.
+</ParamField>
+
+<ParamField body="subject" type="string" required>
+  Category of the enquiry. One of the following keys:
+
+  | Key           | Label displayed in email     |
+  | ------------- | ---------------------------- |
+  | `general`     | Consulta general             |
+  | `support`     | Soporte técnico              |
+  | `suggestion`  | Sugerencia                   |
+  | `partnership` | Colaboración                 |
+
+  Any other non-empty string is also accepted and displayed as-is.
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  The body of the message. Must be a non-empty string. Rendered inside a styled blockquote in the email with `white-space: pre-wrap` so line breaks are preserved.
+</ParamField>
+
+<ParamField body="userId" type="string">
+  Optional MongoDB ObjectId of the authenticated user submitting the form. When present, the email badge reads "Usuario registrado"; when absent, it reads "Invitado". This field is **not** validated against the database — its presence alone signals registration status.
+</ParamField>
+
+### Responses
+
+**HTTP 200 — Success**
+
+<ResponseField name="success" type="boolean">
+  `true` when the email was dispatched without error.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"¡Mensaje enviado! Te responderemos pronto."` — a user-friendly confirmation message suitable for displaying in a toast or alert component.
+</ResponseField>
+
+**HTTP 400 — Validation Error**
+
+<ResponseField name="success" type="boolean">
+  `false`.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  One of:
+  - `"Todos los campos son obligatorios."` — when any required field is missing or blank.
+  - `"El formato del correo no es válido."` — when the `email` field fails the regex check.
+</ResponseField>
+
+**HTTP 500 — Server / SMTP Error**
+
+<ResponseField name="success" type="boolean">
+  `false`.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Error al enviar el mensaje. Intenta de nuevo."`.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  The underlying Node.js / Nodemailer error message for debugging purposes.
+</ResponseField>
+
+---
+
+### cURL Example
+
+```bash
+curl -X POST https://api.eco-it.co/api/contact \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Valentina Rojas",
+    "email": "valentina.rojas@example.com",
+    "subject": "support",
+    "message": "Hola, tengo un problema al registrarme en la plataforma. El botón de confirmación no responde en mi dispositivo móvil.",
+    "userId": "665f1a2b3c4d5e6f7a8b9c0d"
+  }'
+```
+
+**Successful response**
+
+```json
+{
+  "success": true,
+  "mensaje": "¡Mensaje enviado! Te responderemos pronto."
+}
+```
+
+**Validation error response**
+
+```json
+{
+  "success": false,
+  "mensaje": "El formato del correo no es válido."
+}
+```
+
+---
+
+### What the Admin Receives
+
+When a message is successfully processed, the admin inbox receives a rich HTML email with the following layout:
+
+- **Header** — Eco-It green gradient banner with the 🌿 logo and the label "Nuevo mensaje de contacto".
+- **Badges** — The subject category label and a coloured pill indicating "Usuario registrado" (blue) or "Invitado" (amber).
+- **Sender block** — The sender's name and a `mailto:` link for their email address.
+- **Message body** — The full message text in a styled green-bordered blockquote.
+- **Reply button** — A pre-addressed "Responder a \[name\]" CTA that opens a reply draft with `Re: [subject label]` pre-filled.
+- **Footer** — The Colombia/Bogotá formatted timestamp of when the message was received.
+
+The email subject line follows the pattern:
+
+```
+[Eco-It] {subject label} — {name}
+```
+
+For example: `[Eco-It] Soporte técnico — Valentina Rojas`.
+
+---
+
+<Note>
+  Email delivery is handled by the **emailService** utility, which creates a Nodemailer transporter configured for **Gmail SMTP**. The sending address and password are read from the `EMAIL_USER` and `EMAIL_PASS` environment variables at runtime. The destination admin address defaults to `ecoit4167@gmail.com` and can be overridden with the `ADMIN_EMAIL` environment variable.
+</Note>
+
+<Warning>
+  Gmail SMTP requires either an **App Password** (if 2-Step Verification is enabled on the account) or a dedicated service account. Using a personal Gmail password directly will result in authentication failures. Store credentials in environment variables — never hard-code them in the repository.
+</Warning>

@@ -1,0 +1,276 @@
+---
+title: "Eco-It System Architecture Overview"
+sidebarTitle: "Architecture"
+description: "How Eco-It's monorepo, Express backend, React frontend, MongoDB database, Socket.io real-time layer, and third-party integrations connect together."
+---
+
+Eco-It is designed as a vertically integrated platform where every layer — from the database schema to the browser UI — is maintained in a single repository and deployed as two coordinated services. This page explains how those layers are structured, how they communicate, and how security concerns are handled at each boundary.
+
+## Monorepo Layout
+
+Eco-It uses **pnpm workspaces** to manage two packages from a single repository root. The `pnpm-workspace.yaml` declares both workspace members, and the root `package.json` provides shared scripts that orchestrate both services together.
+
+```
+Eco-It/                          ← repository root
+├── pnpm-workspace.yaml          ← workspace manifest (backend, frontend)
+├── package.json                 ← root scripts + concurrently devDep
+│
+├── backend/                     ← Express 5 API workspace
+│   ├── index.js                 ← application entry point
+│   ├── controllers/             ← route handler logic
+│   ├── middlewares/             ← auth, limiters, validation
+│   ├── models/                  ← Mongoose schemas
+│   ├── routes/                  ← Express router definitions
+│   └── utils/                   ← Cloudinary config, helpers
+│
+└── frontend/                    ← React 19 + Vite workspace
+    ├── vite.config.js           ← Vite config + dev proxy
+    ├── src/
+    │   ├── App.jsx              ← root router
+    │   ├── components/          ← pages, UI, animations
+    │   ├── context/             ← React context + route guards
+    │   └── Routes/              ← custom route wrappers
+    └── dist/                    ← production build output
+```
+
+The root-level scripts delegate to each workspace:
+
+| Script | What it does |
+|---|---|
+| `pnpm dev` | Runs `concurrently "pnpm dev:backend" "pnpm dev:frontend"` |
+| `pnpm dev:backend` | `pnpm --filter backend dev` → `nodemon index.js` |
+| `pnpm dev:frontend` | `pnpm --filter frontend dev` → `vite` |
+| `pnpm build` | `pnpm --filter frontend build` → `vite build` |
+
+<Note>
+  The `allowBuilds` key in `pnpm-workspace.yaml` explicitly permits `@openrouter/sdk` to run its postinstall build script. This is required for the OpenRouter SDK to function correctly in the backend workspace.
+</Note>
+
+## Backend
+
+The backend is a **Node.js / Express** HTTP server that also hosts a Socket.io WebSocket server on the same port. Both are attached to a shared `httpServer` instance created by Node's built-in `http.createServer`.
+
+### Middleware Stack
+
+Requests pass through the following middleware in order before reaching any route handler:
+
+<Info>
+  The order of middleware registration in `index.js` is intentional. Security headers (Helmet) and CORS must run before any business logic so that responses cannot leak sensitive headers even when a handler throws early.
+</Info>
+
+1. **`helmet`** — Sets HTTP security headers including a strict Content Security Policy.
+2. **`cors`** — Restricts cross-origin requests to an explicit allowlist (see [Security](#security)).
+3. **`express.json` / `express.urlencoded`** — Parses request bodies with a 10 MB size cap.
+4. **`express-mongo-sanitize` (manual)** — Strips MongoDB operator characters (`$`, `.`) from `req.body` and `req.params` to prevent NoSQL injection.
+5. **`globalLimiter`** — Applies the global rate limit (300 requests / 15 min / IP) to all routes.
+6. **`express-session` + `passport`** — Initializes Passport.js session support for OAuth flows.
+
+### Authentication
+
+Eco-It implements two parallel authentication strategies via **Passport.js**:
+
+- **Local strategy** (`passport-local-mongoose`) — email + password login with bcrypt hashing via `bcryptjs`.
+- **Google OAuth 2.0** (`passport-google-oauth20`) — one-click sign-in via `setupGoogleAuth()` in `controllers/AutheticationGoogle.js`.
+
+After a successful login (either strategy), the server issues a signed **JWT** (`jsonwebtoken`) that the client stores and sends with every subsequent request in the `Authorization: Bearer <token>` header. The `authMiddleware.js` verifies this token before any protected route handler runs.
+
+Socket.io connections are also authenticated: the middleware at the top of `io.use(...)` extracts the JWT from `socket.handshake.auth.token` and calls `jwt.verify` before allowing the WebSocket upgrade.
+
+### Mongoose Models
+
+| Model | Collection | Purpose |
+|---|---|---|
+| `User` | `users` | Core user document — profile, role (`user`, `admin`, `superadmin`), OAuth data, last-seen timestamp |
+| `PuntoReciclaje` | `puntoreiclajs` | Verified recycling collection points with geolocation and material categories |
+| `Chat` | `chats` | EcoBot conversation history linked to a user |
+| `Notification` | `notifications` | In-app notification records (read / unread state) |
+| `AuditLog` | `auditlogs` | Timestamped record of admin actions for compliance |
+| `CarouselSlide` | `carouselslides` | Homepage carousel content managed by admins |
+| `PendingRegistration` | `pendingregistrations` | Temporary records for users mid-OAuth profile-completion flow |
+
+### API Routes
+
+| Prefix | Router file | Scope |
+|---|---|---|
+| `/api/auth` | `authRoutes.js` | Login, register, Google OAuth, password recovery |
+| `/api/user` | `userRoutes.js` | Profile read/update, avatar upload |
+| `/api/ai` | `aiRoutes.js` | EcoBot chat completions via OpenRouter |
+| `/api/admin` | `admin.js` | Admin-only CRUD, audit logs, user management |
+| `/api/contact` | `contactRoutes.js` | Contact form → Nodemailer email dispatch |
+| `/api/carousel` | `carouselRoutes.js` | Carousel slide management |
+| `/api/map` | `map.js` | Public recycling map point reads and admin writes |
+
+### Real-time Layer (Socket.io)
+
+The Socket.io server exposes two exported singletons — `io` (the server instance) and `usuariosConectados` (an in-memory `Map` of active user sessions). Route handlers access the `io` instance through `req.app.get('io')` to push events to connected clients without coupling the socket logic into controllers.
+
+Key events:
+
+| Event | Direction | Description |
+|---|---|---|
+| `usuario:conectado` | Client → Server | Client announces its identity after the handshake; server adds user to `usuariosConectados` and joins admin users to the `admins` room |
+| `usuario:estado` | Server → All | Broadcasts `{ userId, isOnline: true/false }` when a user connects or fully disconnects |
+| `usuarios:online` | Server → All | Broadcasts the current count of unique online users |
+
+## Frontend
+
+The frontend is a single-page application built with **React 19** and bundled by **Vite 8**. It is served independently from the backend — in development via the Vite dev server, in production as a static bundle on a CDN.
+
+### Core Dependencies
+
+| Package | Version | Role |
+|---|---|---|
+| `react` / `react-dom` | 19.2 | Core UI rendering |
+| `react-router-dom` | 7.14 | Client-side routing with nested routes |
+| `tailwindcss` | 4.2 | Utility-first CSS (via `@tailwindcss/vite` plugin) |
+| `framer-motion` / `motion` | 12.x | Page transitions and micro-animations |
+| `leaflet` | 1.9 | Interactive recycling map |
+| `socket.io-client` | 4.8 | Real-time connection to the backend |
+| `@cloudinary/react` | 1.14 | Optimized image delivery and upload widget |
+| `lucide-react` | 0.562 | Icon library |
+| `styled-components` | 6.1 | Component-scoped CSS for complex UI pieces |
+
+### Routing and Route Guards
+
+All routes are defined in `src/App.jsx`. Eco-It uses four route guard components:
+
+| Guard | Behavior |
+|---|---|
+| `PrivateRoute` | Redirects unauthenticated users to `/login`; accepts an optional `rolRequerido` prop (e.g., `"admin"`) to enforce role-based access |
+| `PublicRoute` | Redirects already-authenticated users away from `/login` and `/register` |
+| `RecoveryRoute` | Ensures password-recovery steps are visited in the correct order |
+| `AdminRestrictionGuard` | Prevents admin/superadmin users from accessing regular user pages (they are redirected to `/admin`) |
+
+Key page routes:
+
+| Path | Component | Access |
+|---|---|---|
+| `/` | `Home` | Public |
+| `/maps` | `Mapapage` + Leaflet | Public |
+| `/ai` | `AIPage` (EcoBot) | Authenticated users |
+| `/game` | `GamePage` (Unity WebGL) | Authenticated users |
+| `/perfil` | `ProfileEcoIt` | Authenticated users |
+| `/admin` | `AdminLayout` | `admin` or `superadmin` role |
+| `/auth/google/success` | `GoogleSuccess` | OAuth callback |
+
+## Third-Party Integrations
+
+<CardGroup cols={2}>
+  <Card title="Cloudinary" icon="image">
+    User avatars and carousel images are uploaded through the Cloudinary SDK (`cloudinary` v2 on the backend, `@cloudinary/react` on the frontend). The backend utility at `utils/cloudinary.js` initializes the SDK with credentials from environment variables. Helmet's CSP explicitly allows image sources from `https://res.cloudinary.com`.
+  </Card>
+  <Card title="OpenRouter / Google Gemini" icon="brain">
+    EcoBot AI uses the `@openrouter/sdk` to stream chat completions from Google Gemini. Requests are routed through OpenRouter's API endpoint so that the model can be swapped without changing application code. The AI router at `/api/ai` applies its own rate limiter on top of the global one to prevent prompt-flooding.
+  </Card>
+  <Card title="Google OAuth 2.0" icon="google">
+    `passport-google-oauth20` handles the OAuth handshake. After a successful callback, Eco-It either logs in an existing user or creates a `PendingRegistration` record and redirects the user to `/completar-perfil` to finish their profile before receiving a JWT.
+  </Card>
+  <Card title="MongoDB Atlas" icon="database">
+    In production, `MONGODB_URI` points to a MongoDB Atlas cluster. Mongoose 9 manages the connection lifecycle with automatic reconnection. In development, a local MongoDB instance works identically since the URI format is the same.
+  </Card>
+</CardGroup>
+
+## Request Flow
+
+The following describes how a typical **authenticated API request** travels through the system end-to-end:
+
+```
+Browser (React)
+    │
+    │  fetch('/api/user/profile', { headers: { Authorization: 'Bearer <JWT>' } })
+    ▼
+Vite Dev Proxy  (development only)
+    │  /api/* → http://localhost:3000
+    ▼
+Express HTTP Server  :3000
+    │
+    ├─ helmet()               ← attach security headers
+    ├─ cors()                 ← validate Origin against allowlist
+    ├─ express.json()         ← parse request body
+    ├─ mongoSanitize()        ← strip NoSQL injection characters
+    ├─ globalLimiter()        ← check rate-limit counter for this IP
+    │
+    ├─ Router: /api/user
+    │       └─ authMiddleware ← jwt.verify(token, JWT_SECRET)
+    │               │
+    │               ▼
+    │          userController.getProfile()
+    │               │
+    │               ▼
+    │          Mongoose → MongoDB Atlas
+    │               │
+    │               ▼  (if notification needed)
+    │          io.to(userId).emit('notification', payload)
+    │               │
+    ▼               ▼
+  JSON Response   Socket.io push to connected client
+```
+
+In production, the Vite proxy is replaced by a CDN / reverse proxy (e.g., Netlify redirects or an Nginx rule) that forwards `/api/*` traffic to the deployed backend URL.
+
+## Security
+
+Eco-It applies defence-in-depth across multiple layers:
+
+<Info>
+  All security controls described here are active by default when the application starts. No additional configuration is required beyond setting the environment variables described in the [Quickstart](/quickstart).
+</Info>
+
+### Helmet Content Security Policy
+
+The CSP is customized in `index.js` to extend Helmet's safe defaults with platform-specific sources:
+
+```js
+contentSecurityPolicy: {
+  directives: {
+    ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+    "img-src":     ["'self'", "data:", "https://res.cloudinary.com",
+                    "https://*.tile.openstreetmap.org"],
+    "script-src":  ["'self'", "'unsafe-inline'"],
+    "connect-src": ["'self'", "https://api.cloudinary.com",
+                    "wss://*.openrouter.ai"]
+  }
+}
+```
+
+`crossOriginEmbedderPolicy` is disabled to allow the Unity WebGL game to load cross-origin resources.
+
+### Rate Limiting
+
+Two limiters are defined in `middlewares/limiters.js`:
+
+| Limiter | Window | Max requests | Applied to |
+|---|---|---|---|
+| `globalLimiter` | 15 minutes | 300 per IP | Every route (`app.use(globalLimiter)`) |
+| `authLimiter` | 15 minutes | 15 per IP | Auth routes (login, register, password recovery) |
+
+The stricter `authLimiter` on authentication endpoints makes brute-force credential attacks impractical.
+
+### CORS Allowlist
+
+Only the following origins may make cross-origin requests:
+
+```js
+origin: [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'https://eco-it.netlify.app'
+]
+```
+
+The same allowlist is applied to both `cors()` middleware and the Socket.io server configuration, ensuring WebSocket upgrade requests are also origin-checked.
+
+### NoSQL Injection Prevention
+
+Because `express-mongo-sanitize@2.2.0` cannot safely patch `req.query` in Express 5 (where query is read-only), Eco-It applies sanitization manually to `req.body` and `req.params` via an inline middleware:
+
+```js
+app.use((req, res, next) => {
+  if (req.body)   req.body   = mongoSanitize.sanitize(req.body);
+  if (req.params) req.params = mongoSanitize.sanitize(req.params);
+  next();
+});
+```
+
+This strips any keys containing `$` or `.` before they reach Mongoose, preventing operator injection attacks.

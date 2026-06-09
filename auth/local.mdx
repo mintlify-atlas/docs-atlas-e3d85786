@@ -1,0 +1,320 @@
+---
+title: "Email and Password Authentication in Eco-It"
+sidebarTitle: "Local Auth"
+description: "Register with email, verify via a 6-digit code, and log in to receive a JWT token. Includes profile completion for Google users and account deletion."
+---
+
+Eco-It's local authentication flow keeps account creation safe by requiring every new user to verify their email address before their account is created in the database. A temporary `PendingRegistration` document holds the user's details and a hashed 6-digit code for up to 15 minutes. Only after a successful code verification is the permanent `User` document written to MongoDB and a JWT issued. This page documents every endpoint, field requirement, and error case in the local auth flow.
+
+## Registration flow
+
+Registration is a two-request handshake. The first request sends a verification code to the user's email; the second verifies that code and creates the account. A separate resend endpoint lets users request a fresh code if theirs expires or gets lost.
+
+<Steps>
+  <Step title="Send the verification code">
+    Submit the user's full registration details to request a 6-digit code. The backend validates all fields, checks that the email is not already registered, hashes the password, and emails the code **before** writing anything to the database — if the email delivery fails, no record is created.
+
+    **Endpoint:** `POST /api/auth/enviar-codigo-registro`
+
+    **Request body:**
+
+    <ParamField body="nombre" type="string" required>
+      First name. 2–50 characters.
+    </ParamField>
+
+    <ParamField body="apellido" type="string" required>
+      Last name.
+    </ParamField>
+
+    <ParamField body="email" type="string" required>
+      Valid email address. Must not already have an active account.
+    </ParamField>
+
+    <ParamField body="password" type="string" required>
+      Plain-text password. Minimum 8 characters (enforced by the `User` model schema). The backend hashes it with bcrypt (salt rounds: 10) before storing in `PendingRegistration`.
+    </ParamField>
+
+    <ParamField body="telefono" type="string" required>
+      Mobile phone number. Validated with `isMobilePhone()`.
+    </ParamField>
+
+    <ParamField body="edad" type="number" required>
+      User's age. Stored as an integer.
+    </ParamField>
+
+    ```bash
+    curl -X POST https://api.eco-it.co/api/auth/enviar-codigo-registro \
+      -H "Content-Type: application/json" \
+      -d '{
+        "nombre": "Laura",
+        "apellido": "Ramírez",
+        "email": "laura@example.com",
+        "password": "MiClave2024!",
+        "telefono": "+573001234567",
+        "edad": 28
+      }'
+    ```
+
+    **Success response `200`:**
+
+    ```json
+    {
+      "success": true,
+      "mensaje": "Código enviado a tu correo electrónico."
+    }
+    ```
+
+    <Note>
+      A **3-minute cooldown** applies between code requests for the same email. If a pending registration already exists with more than 12 minutes remaining on its 15-minute timer (i.e., fewer than 3 minutes have passed since the last request), the server returns `429` with the number of minutes to wait.
+    </Note>
+  </Step>
+
+  <Step title="Verify the code and create the account">
+    Submit the email and the 6-digit code from the email. The backend hashes the submitted code with SHA-256 and compares it against the stored hash. On success, it creates the `User` document, deletes the `PendingRegistration` record, sends a welcome email, and returns a JWT.
+
+    **Endpoint:** `POST /api/auth/verificar-registro`
+
+    <ParamField body="email" type="string" required>
+      The same email used in step 1.
+    </ParamField>
+
+    <ParamField body="codigo" type="string" required>
+      The 6-digit verification code received by email.
+    </ParamField>
+
+    ```bash
+    curl -X POST https://api.eco-it.co/api/auth/verificar-registro \
+      -H "Content-Type: application/json" \
+      -d '{
+        "email": "laura@example.com",
+        "codigo": "382910"
+      }'
+    ```
+
+    **Success response `201`:**
+
+    ```json
+    {
+      "success": true,
+      "mensaje": "¡Cuenta verificada y creada exitosamente!",
+      "data": {
+        "token": "<jwt>",
+        "usuario": {
+          "id": "664f1a2b3c4d5e6f7a8b9c0d",
+          "nombre": "Laura",
+          "apellido": "Ramírez",
+          "email": "laura@example.com",
+          "telefono": "+573001234567",
+          "edad": 28,
+          "rol": "user",
+          "perfilCompleto": true
+        }
+      }
+    }
+    ```
+
+    <Warning>
+      The code expires after **15 minutes**. After **5 consecutive incorrect attempts** the pending registration is deleted and the user must start over from step 1. Each incorrect attempt returns the number of remaining tries in the `mensaje` field.
+    </Warning>
+  </Step>
+
+  <Step title="Resend the verification code">
+    If the code was not received or has expired, users can request a new one without resubmitting their full details.
+
+    **Endpoint:** `POST /api/auth/reenviar-codigo-registro`
+
+    <ParamField body="email" type="string" required>
+      Email address of the pending registration.
+    </ParamField>
+
+    ```bash
+    curl -X POST https://api.eco-it.co/api/auth/reenviar-codigo-registro \
+      -H "Content-Type: application/json" \
+      -d '{ "email": "laura@example.com" }'
+    ```
+
+    **Success response `200`:**
+
+    ```json
+    {
+      "success": true,
+      "mensaje": "Nuevo código enviado a tu correo."
+    }
+    ```
+  </Step>
+</Steps>
+
+## Login
+
+After an account is created (or on subsequent visits), users authenticate by submitting their email and password. The backend uses bcrypt's `compare` to validate the password against the hashed value stored in MongoDB (the `password` field is excluded from queries by default via `select: false` in the schema — the login controller explicitly re-includes it with `.select('+password')`).
+
+**Endpoint:** `POST /api/auth/login`
+
+<ParamField body="email" type="string" required>
+  Registered email address.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Plain-text password.
+</ParamField>
+
+```bash
+curl -X POST https://api.eco-it.co/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "laura@example.com",
+    "password": "MiClave2024!"
+  }'
+```
+
+**Success response `200`:**
+
+```json
+{
+  "message": "Inicio de sesión correcto",
+  "data": {
+    "token": "<jwt>",
+    "usuario": {
+      "id": "664f1a2b3c4d5e6f7a8b9c0d",
+      "nombre": "Laura",
+      "apellido": "Ramírez",
+      "edad": 28,
+      "email": "laura@example.com",
+      "telefono": "+573001234567",
+      "rol": "user",
+      "perfilCompleto": true
+    }
+  }
+}
+```
+
+<ResponseField name="token" type="string">
+  A signed JWT valid for **12 hours**. Store this in `localStorage` under the key `token` and include it in subsequent requests as `Authorization: Bearer <token>`.
+</ResponseField>
+
+<ResponseField name="usuario" type="object">
+  The authenticated user's profile data, excluding the password hash.
+</ResponseField>
+
+<Note>
+  If the account was created with Google OAuth and has no local password set, the login endpoint returns `401` with the message: *"Este usuario se registró con Google. Por favor, inicia sesión con Google."* Direct users to the [Google OAuth flow](/auth/google-oauth) in this case.
+</Note>
+
+## Logout
+
+Logout is handled client-side by removing the token from `localStorage`. The server endpoint exists for audit-log purposes and to invalidate any future server-side session state.
+
+**Endpoint:** `POST /api/auth/logout`
+
+```bash
+curl -X POST https://api.eco-it.co/api/auth/logout
+```
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Sesión cerrada correctamente"
+}
+```
+
+## Validation rules
+
+The `validarRegistro` and `validarLogin` middlewares from `validation.js` run **before** the controllers and return a `400` response with a structured `errores` array if any field is invalid.
+
+### Registration (`validarRegistro`)
+
+| Field | Rule |
+|---|---|
+| `nombre` | Required · 2–50 characters (trimmed) |
+| `email` | Required · valid email format · normalized to lowercase |
+| `password` | Required · minimum **6 characters** (middleware) — the `User` schema itself enforces **8 characters** as a floor |
+
+<Info>
+  The `validarRegistro` middleware is attached to the legacy `POST /api/auth/registro` route, which now returns `400` directing clients to use the two-step email verification flow instead. The `enviarCodigoRegistro` controller performs its own inline field checks for the full set of registration fields (`nombre`, `apellido`, `edad`, `email`, `telefono`, `password`).
+</Info>
+
+### Login (`validarLogin`)
+
+| Field | Rule |
+|---|---|
+| `email` | Required · valid email format (trimmed) |
+| `password` | Required (non-empty) |
+
+### Profile completion (`validarPerfilCompleto`)
+
+| Field | Rule |
+|---|---|
+| `apellido` | Required (trimmed, non-empty) |
+| `edad` | Integer between 1 and 120 |
+| `telefono` | Required · valid mobile phone format |
+
+## Password hashing
+
+<Note>
+  Eco-It uses **bcrypt** with a salt factor of **10** for all local passwords. Hashing is performed in a Mongoose `pre('save')` hook on the `User` model. The hook is skipped when `this.$skipPasswordHash` is set to `true` (used during email-verification registration, where the password is already hashed in `PendingRegistration`) or when the `password` field has not been modified.
+</Note>
+
+```js
+// From backend/models/user.js
+userSchema.pre('save', async function () {
+  if (this.$skipPasswordHash || !this.isModified('password') || !this.password) {
+    return;
+  }
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+});
+```
+
+## Profile completion (for Google OAuth users)
+
+Google OAuth users are created without `apellido`, `edad`, or `telefono`, and their `perfilCompleto` flag is set to `false`. After their first login they must complete their profile before accessing the full platform. This endpoint is also available to any authenticated user who needs to update these fields.
+
+**Endpoint:** `PUT /api/auth/completar-perfil`
+
+**Requires:** `Authorization: Bearer <token>`
+
+<ParamField body="apellido" type="string" required>
+  Last name (trimmed, non-empty).
+</ParamField>
+
+<ParamField body="edad" type="number" required>
+  Integer between 1 and 120.
+</ParamField>
+
+<ParamField body="telefono" type="string" required>
+  Valid mobile phone number.
+</ParamField>
+
+```bash
+curl -X PUT https://api.eco-it.co/api/auth/completar-perfil \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "apellido": "González",
+    "edad": 31,
+    "telefono": "+573109876543"
+  }'
+```
+
+**Success response `200`:**
+
+```json
+{
+  "success": true,
+  "usuario": {
+    "_id": "664f1a2b3c4d5e6f7a8b9c0d",
+    "nombre": "Carlos",
+    "apellido": "González",
+    "email": "carlos@gmail.com",
+    "telefono": "+573109876543",
+    "edad": 31,
+    "perfilCompleto": true
+  }
+}
+```
+
+<Tip>
+  After calling this endpoint, the frontend should request a fresh JWT (via login or a token-refresh mechanism) so that the new `perfilCompleto: true` claim is reflected in the token payload and `PrivateRoute` guards work correctly.
+</Tip>

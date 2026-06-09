@@ -1,0 +1,504 @@
+---
+title: "Authentication API Endpoints — POST /api/auth"
+sidebarTitle: "Auth Endpoints"
+description: "All /api/auth endpoints: registration with email verification, login, logout, Google OAuth, profile completion, and password recovery."
+---
+
+The Eco-It authentication system uses a **two-step email-verification flow** for new registrations, JWT-based sessions for all protected routes, and a Google OAuth 2.0 integration for single-sign-on. Password recovery is handled through a six-digit code delivered by email. All auth endpoints are rate-limited; exceeding the limit returns `429 Too Many Requests`.
+
+<Info>
+  JWTs are returned in the response body — **not** in cookies. Store the token in `localStorage` or a secure in-memory store and attach it as `Authorization: Bearer <token>` on every protected request.
+</Info>
+
+---
+
+## Registration flow
+
+User registration is a two-step process: first the server sends a verification code to the supplied email address, then the client submits that code to finalise account creation.
+
+```
+POST /api/auth/enviar-codigo-registro   ← Step 1: request verification code
+POST /api/auth/verificar-registro       ← Step 2: verify code → account created
+POST /api/auth/reenviar-codigo-registro ← Resend code (3-minute cooldown)
+```
+
+---
+
+### POST `/api/auth/enviar-codigo-registro`
+
+Validates the supplied data, checks for duplicate emails, hashes the password, and sends a **6-digit OTP** to the provided email address. The pending registration is stored for 15 minutes. Returns `429` if a code was already sent in the last 3 minutes.
+
+**Request body**
+
+<ParamField body="nombre" type="string" required>
+  First name of the user. Must be between 2 and 50 characters.
+</ParamField>
+
+<ParamField body="apellido" type="string" required>
+  Last name / surname of the user.
+</ParamField>
+
+<ParamField body="edad" type="number" required>
+  Age of the user. Must be a positive integer.
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  Valid email address. Must not already be registered.
+</ParamField>
+
+<ParamField body="telefono" type="string" required>
+  Mobile phone number (validated format).
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Plain-text password. Minimum 8 characters. Hashed with bcrypt (cost 12) before persisting.
+</ParamField>
+
+**Responses**
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  Human-readable confirmation: `"Código enviado a tu correo electrónico."`.
+</ResponseField>
+
+```bash
+curl -X POST https://api.eco-it.app/api/auth/enviar-codigo-registro \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombre": "Valentina",
+    "apellido": "Ríos",
+    "edad": 28,
+    "email": "valentina@example.com",
+    "telefono": "3001234567",
+    "password": "MiClave2024!"
+  }'
+```
+
+```json
+{ "success": true, "mensaje": "Código enviado a tu correo electrónico." }
+```
+
+<Warning>
+  If the email cannot be delivered (e.g. invalid address or SMTP failure), the pending registration is **not** saved and the endpoint returns `500`. No retry cooldown applies in this case.
+</Warning>
+
+---
+
+### POST `/api/auth/verificar-registro`
+
+Verifies the 6-digit code against the pending registration record. On success the user account is created in the database, a welcome email is dispatched, and a **7-day JWT** is returned. Allows a maximum of **5 incorrect attempts** before the pending record is discarded.
+
+**Request body**
+
+<ParamField body="email" type="string" required>
+  The same email address used in `enviar-codigo-registro`.
+</ParamField>
+
+<ParamField body="codigo" type="string" required>
+  The 6-digit verification code received by email.
+</ParamField>
+
+**Responses**
+
+<ResponseField name="success" type="boolean">
+  `true` on successful verification and account creation.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"¡Cuenta verificada y creada exitosamente!"`
+</ResponseField>
+
+<ResponseField name="data.token" type="string">
+  Signed JWT. Expires in **7 days**. Payload: `{ id, rol, perfilCompleto }`.
+</ResponseField>
+
+<ResponseField name="data.usuario" type="object">
+  Newly created user object.
+</ResponseField>
+
+<ResponseField name="data.usuario.id" type="string">
+  MongoDB `_id` of the user.
+</ResponseField>
+
+<ResponseField name="data.usuario.nombre" type="string" />
+<ResponseField name="data.usuario.apellido" type="string" />
+<ResponseField name="data.usuario.email" type="string" />
+<ResponseField name="data.usuario.telefono" type="string" />
+<ResponseField name="data.usuario.edad" type="number" />
+<ResponseField name="data.usuario.rol" type="string">
+  Always `"user"` for newly registered accounts.
+</ResponseField>
+
+<ResponseField name="data.usuario.perfilCompleto" type="boolean">
+  `true` — email-registered users always have a complete profile.
+</ResponseField>
+
+```bash
+curl -X POST https://api.eco-it.app/api/auth/verificar-registro \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "valentina@example.com", "codigo": "482910" }'
+```
+
+```json
+{
+  "success": true,
+  "mensaje": "¡Cuenta verificada y creada exitosamente!",
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "usuario": {
+      "id": "665f1a2b3c4d5e6f7a8b9c0d",
+      "nombre": "Valentina",
+      "apellido": "Ríos",
+      "email": "valentina@example.com",
+      "telefono": "3001234567",
+      "edad": 28,
+      "rol": "user",
+      "perfilCompleto": true
+    }
+  }
+}
+```
+
+---
+
+### POST `/api/auth/reenviar-codigo-registro`
+
+Issues a fresh 6-digit code for an existing pending registration. Enforces a **3-minute cooldown** between sends and resets the 15-minute expiry window.
+
+**Request body**
+
+<ParamField body="email" type="string" required>
+  Email address of the pending registration.
+</ParamField>
+
+**Responses**
+
+<ResponseField name="success" type="boolean" />
+<ResponseField name="mensaje" type="string">
+  `"Nuevo código enviado a tu correo."` on success.
+</ResponseField>
+
+```bash
+curl -X POST https://api.eco-it.app/api/auth/reenviar-codigo-registro \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "valentina@example.com" }'
+```
+
+```json
+{ "success": true, "mensaje": "Nuevo código enviado a tu correo." }
+```
+
+---
+
+## Login & Logout
+
+### POST `/api/auth/login`
+
+Authenticates a local (email + password) user and returns a **12-hour JWT**.
+
+<Warning>
+  Users who registered via Google OAuth do not have a password. Attempting to log in with their email returns `401` with the message `"Este usuario se registró con Google."`.
+</Warning>
+
+**Request body**
+
+<ParamField body="email" type="string" required>
+  Registered email address.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Plain-text password.
+</ParamField>
+
+**Responses**
+
+<ResponseField name="message" type="string">
+  `"Inicio de sesión correcto"` on success.
+</ResponseField>
+
+<ResponseField name="data.token" type="string">
+  Signed JWT. Expires in **12 hours**.
+</ResponseField>
+
+<ResponseField name="data.usuario" type="object">
+  Authenticated user object — same shape as the registration response.
+</ResponseField>
+
+```bash
+curl -X POST https://api.eco-it.app/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "valentina@example.com", "password": "MiClave2024!" }'
+```
+
+```json
+{
+  "message": "Inicio de sesión correcto",
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "usuario": {
+      "id": "665f1a2b3c4d5e6f7a8b9c0d",
+      "nombre": "Valentina",
+      "apellido": "Ríos",
+      "edad": 28,
+      "email": "valentina@example.com",
+      "telefono": "3001234567",
+      "rol": "user",
+      "perfilCompleto": true
+    }
+  }
+}
+```
+
+---
+
+### POST `/api/auth/logout`
+
+Signals the client to discard the JWT. Since tokens are stored client-side, this endpoint simply returns a success acknowledgement — no server-side state is invalidated.
+
+**Request body** — none required.
+
+**Response**
+
+<ResponseField name="success" type="boolean">
+  Always `true`.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Sesión cerrada correctamente"`.
+</ResponseField>
+
+```bash
+curl -X POST https://api.eco-it.app/api/auth/logout
+```
+
+```json
+{ "success": true, "message": "Sesión cerrada correctamente" }
+```
+
+---
+
+## Google OAuth
+
+### GET `/api/auth/google`
+
+Initiates the Google OAuth 2.0 consent flow. Redirects the browser to Google's authorisation page requesting the `profile` and `email` scopes. This endpoint is visited directly by the browser — it is **not** called with `fetch` or `XMLHttpRequest`.
+
+**No request body.** No authentication required.
+
+<Tip>
+  Open this URL in a new browser tab or window, or set `window.location.href` from the frontend.
+</Tip>
+
+---
+
+### GET `/api/auth/google/callback`
+
+Handles the OAuth callback from Google. On success, generates a **12-hour JWT** and returns an HTML page that redirects the browser to:
+
+```
+{FRONT_URL}/auth/google/success?token=<jwt>
+```
+
+The frontend must read the `token` query parameter and store it for subsequent API calls. On failure, the browser is redirected to `{FRONT_URL}/login`.
+
+**No request body.** Managed entirely by Passport.js and the browser redirect cycle.
+
+---
+
+## Profile completion (Google OAuth users)
+
+### PUT `/api/auth/completar-perfil`
+
+Google OAuth users land with `perfilCompleto: false`. This endpoint lets them supply the remaining fields before accessing the full application.
+
+**Authentication:** `Authorization: Bearer <token>` required.
+
+**Request body**
+
+<ParamField body="apellido" type="string" required>
+  Last name. Must not be empty.
+</ParamField>
+
+<ParamField body="edad" type="number" required>
+  Age. Must be an integer between 1 and 120.
+</ParamField>
+
+<ParamField body="telefono" type="string" required>
+  Mobile phone number in a valid format.
+</ParamField>
+
+**Responses**
+
+<ResponseField name="success" type="boolean" />
+<ResponseField name="usuario" type="object">
+  The full updated user document from MongoDB.
+</ResponseField>
+
+```bash
+curl -X PUT https://api.eco-it.app/api/auth/completar-perfil \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "apellido": "Ríos", "edad": 28, "telefono": "3001234567" }'
+```
+
+```json
+{
+  "success": true,
+  "usuario": {
+    "_id": "665f1a2b3c4d5e6f7a8b9c0d",
+    "nombre": "Valentina",
+    "apellido": "Ríos",
+    "email": "valentina@gmail.com",
+    "telefono": "3001234567",
+    "edad": 28,
+    "rol": "user",
+    "perfilCompleto": true
+  }
+}
+```
+
+---
+
+## Password recovery flow
+
+Password recovery is a three-step process using a 6-digit email code.
+
+<Steps>
+  <Step title="Request a recovery code">
+    `POST /api/auth/recuperar-password` — sends the code to the user's registered email.
+  </Step>
+  <Step title="Verify the code">
+    `POST /api/auth/recuperar-password/verificar` — confirms the code is valid before letting the user type a new password.
+  </Step>
+  <Step title="Set a new password">
+    `POST /api/auth/recuperar-password/restablecer` — applies the new password and invalidates the recovery token.
+  </Step>
+</Steps>
+
+If the user never received the code, `POST /api/auth/recuperar-password/reenviar` issues a fresh one (3-minute cooldown).
+
+---
+
+### POST `/api/auth/recuperar-password`
+
+Looks up the account by email, generates a 6-digit code (SHA-256 hashed before storage), and emails it to the user. Code expires in **15 minutes**.
+
+**Request body**
+
+<ParamField body="email" type="string" required>
+  Email address of the account to recover.
+</ParamField>
+
+```bash
+curl -X POST https://api.eco-it.app/api/auth/recuperar-password \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "valentina@example.com" }'
+```
+
+```json
+{ "success": true, "mensaje": "Código enviado a tu correo electrónico" }
+```
+
+---
+
+### POST `/api/auth/recuperar-password/verificar`
+
+Confirms that the provided code is valid and unexpired. Use this step to gate the "new password" form in the UI — it does **not** change the password.
+
+**Request body**
+
+<ParamField body="email" type="string" required>
+  Account email address.
+</ParamField>
+
+<ParamField body="codigo" type="string" required>
+  The 6-digit code received by email.
+</ParamField>
+
+```bash
+curl -X POST https://api.eco-it.app/api/auth/recuperar-password/verificar \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "valentina@example.com", "codigo": "748201" }'
+```
+
+```json
+{ "success": true, "mensaje": "Código válido" }
+```
+
+---
+
+### POST `/api/auth/recuperar-password/reenviar`
+
+Issues a new 6-digit code and resets the 15-minute expiry. Enforces a **3-minute cooldown** between resends.
+
+**Request body**
+
+<ParamField body="email" type="string" required>
+  Account email address.
+</ParamField>
+
+```bash
+curl -X POST https://api.eco-it.app/api/auth/recuperar-password/reenviar \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "valentina@example.com" }'
+```
+
+```json
+{ "success": true, "mensaje": "Nuevo código enviado a tu correo electrónico" }
+```
+
+---
+
+### POST `/api/auth/recuperar-password/restablecer`
+
+Final step of password recovery. Verifies the code one more time, updates the password (the model's `pre('save')` hook hashes it automatically), and clears the recovery token fields.
+
+**Request body**
+
+<ParamField body="email" type="string" required>
+  Account email address.
+</ParamField>
+
+<ParamField body="codigo" type="string" required>
+  The 6-digit code from the recovery email.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  New plain-text password. Minimum 8 characters.
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="boolean" />
+<ResponseField name="mensaje" type="string">
+  `"Contraseña actualizada correctamente"` on success.
+</ResponseField>
+
+```bash
+curl -X POST https://api.eco-it.app/api/auth/recuperar-password/restablecer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "valentina@example.com",
+    "codigo": "748201",
+    "password": "NuevaClave2024!"
+  }'
+```
+
+```json
+{ "success": true, "mensaje": "Contraseña actualizada correctamente" }
+```
+
+---
+
+## Error reference
+
+| HTTP Status | Cause |
+|-------------|-------|
+| `400` | Missing or invalid fields; duplicate email; expired or incorrect OTP; max OTP attempts reached |
+| `401` | Wrong credentials; Google-only account attempted with password login |
+| `404` | Email not found in the system |
+| `429` | Rate limit exceeded (auth limiter) or resend cooldown active |
+| `500` | Internal server error; SMTP delivery failure |

@@ -1,0 +1,186 @@
+---
+title: "Google OAuth 2.0 Sign-In for Eco-It"
+sidebarTitle: "Google OAuth"
+description: "Allow users to sign in with their Google account using Passport.js Google Strategy. The callback issues a JWT passed via redirect URL."
+---
+
+Eco-It supports Google OAuth 2.0 as a first-class authentication method, letting users sign in with their existing Google account without creating a separate password. The integration is built with Passport.js and the `passport-google-oauth20` strategy. On successful authentication, the backend mints a JWT and redirects the browser to the frontend with the token embedded in the URL query string, where it is immediately extracted and moved to `localStorage`.
+
+## How it works
+
+The complete Google OAuth flow involves three parties: the Eco-It frontend, the Eco-It backend, and Google's OAuth servers.
+
+<Steps>
+  <Step title="Redirect the user to Google">
+    The frontend redirects the browser to the backend's Google auth endpoint. Passport intercepts this request and builds the Google authorization URL, requesting access to the user's `profile` and `email` scopes, then redirects the browser to Google.
+
+    **Endpoint:** `GET /api/auth/google`
+
+    ```bash
+    # Typically triggered by a button in the frontend — no fetch() needed.
+    # The browser navigates directly to:
+    GET https://api.eco-it.co/api/auth/google
+    ```
+
+    Passport redirects the browser to:
+
+    ```
+    https://accounts.google.com/o/oauth2/v2/auth
+      ?client_id=<GOOGLE_CLIENT_ID>
+      &redirect_uri=https://api.eco-it.co/api/auth/google/callback
+      &response_type=code
+      &scope=profile%20email
+    ```
+  </Step>
+
+  <Step title="Google redirects to the callback">
+    After the user grants consent, Google redirects the browser to the registered callback URL with an authorization code. Passport exchanges the code for an access token, fetches the user's Google profile, and runs the strategy's verify callback.
+
+    **Endpoint:** `GET /api/auth/google/callback`
+
+    Inside the verify callback, three outcomes are possible:
+
+    | Scenario | Action |
+    |---|---|
+    | User exists by `googleId` | Authenticate the existing user. |
+    | User exists by `email` but no `googleId` | Link the Google account to the existing user and authenticate. |
+    | New user (no matching `googleId` or `email`) | Create a new `User` document with `perfilCompleto: false`, send a welcome email, and authenticate. |
+
+    <Info>
+      New Google users are created with `authProvider: 'google'` and without a `password`, `apellido`, `telefono`, or `edad`. The `apellido` field is set from `profile.name.familyName` when available, but `perfilCompleto` is always `false` for brand-new Google registrations until the user completes their profile.
+    </Info>
+  </Step>
+
+  <Step title="Backend mints a JWT and redirects to the frontend">
+    Once Passport has resolved the user, the callback handler signs a JWT containing `id`, `rol`, and `perfilCompleto`, then constructs an intermediate HTML page that immediately sets `window.location.href` to the frontend success URL with the token as a query parameter.
+
+    **JWT payload:**
+
+    ```json
+    {
+      "id": "664f1a2b3c4d5e6f7a8b9c0d",
+      "rol": "user",
+      "perfilCompleto": false
+    }
+    ```
+
+    **Redirect target:**
+
+    ```
+    https://eco-it.co/auth/google/success?token=<jwt>
+    ```
+
+    If authentication fails (e.g. the user denies consent), Passport redirects to:
+
+    ```
+    https://eco-it.co/login
+    ```
+  </Step>
+
+  <Step title="Frontend extracts and stores the token">
+    The frontend `GoogleSuccess` component reads the `token` query parameter from the URL, calls `AuthContext.login()`, and stores the token in `localStorage` under the key `token`. From this point the session is identical to a local-auth session.
+
+    ```js
+    // Conceptual — from the GoogleSuccess page component
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+
+    // Decode to read perfilCompleto
+    const payload = JSON.parse(atob(token.split('.')[1]));
+
+    if (!payload.perfilCompleto) {
+      login(token, usuario, '/completar-perfil');
+    } else {
+      login(token, usuario);
+    }
+    ```
+  </Step>
+</Steps>
+
+## Profile completion after Google sign-in
+
+When `perfilCompleto` is `false` in the JWT payload, the `AuthContext.login()` function is called with `/completar-perfil` as the `redirectOverride`. This sends the user to a form where they fill in their `apellido`, `edad`, and `telefono` before accessing the full platform.
+
+The profile completion endpoint requires an authenticated request:
+
+```bash
+curl -X PUT https://api.eco-it.co/api/auth/completar-perfil \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "apellido": "Martínez",
+    "edad": 26,
+    "telefono": "+573151234567"
+  }'
+```
+
+See the [Profile completion section in Local Auth](/auth/local#profile-completion-for-google-oauth-users) for the full field specification and response shape.
+
+## Passport.js configuration
+
+The Google strategy is initialised in `backend/controllers/AutheticationGoogle.js` via the exported `setupGoogleAuth()` function, which must be called **after** `dotenv.config()` has loaded environment variables. The `callbackURL` is constructed from `GOOGLE_CALLBACK_URL` if set, otherwise it falls back to `BACK_URL/api/auth/google/callback`.
+
+```js
+// From backend/controllers/AutheticationGoogle.js
+passport.use(new GoogleStrategy({
+  clientID:     process.env.CLIENT_ID,
+  clientSecret: process.env.CLIENT_SECRET,
+  callbackURL:  process.env.GOOGLE_CALLBACK_URL
+                || `${process.env.BACK_URL || 'http://localhost:3000'}/api/auth/google/callback`,
+  passReqToCallback: true
+}, async (req, accessToken, refreshToken, profile, done) => {
+  // find-or-create logic …
+}));
+```
+
+## Required environment variables
+
+<ParamField body="CLIENT_ID" type="string" required>
+  The OAuth 2.0 Client ID from your Google Cloud Console project. Note that the code reads this as `CLIENT_ID`, not `GOOGLE_CLIENT_ID`.
+</ParamField>
+
+<ParamField body="CLIENT_SECRET" type="string" required>
+  The OAuth 2.0 Client Secret from your Google Cloud Console project. Read as `CLIENT_SECRET` in the strategy config.
+</ParamField>
+
+<ParamField body="GOOGLE_CALLBACK_URL" type="string">
+  Full callback URL registered in Google Cloud Console. If omitted, the backend constructs it from `BACK_URL`. **Must exactly match** the URI registered in the Google Cloud Console.
+</ParamField>
+
+<ParamField body="BACK_URL" type="string">
+  Base URL of the backend (e.g. `https://api.eco-it.co`). Used as a fallback for building the callback URL when `GOOGLE_CALLBACK_URL` is not set.
+</ParamField>
+
+<ParamField body="FRONT_URL" type="string" required>
+  Base URL of the React frontend (e.g. `https://eco-it.co`). The callback handler redirects to `FRONT_URL/auth/google/success?token=...` on success and to `FRONT_URL/login` on failure.
+</ParamField>
+
+## Google Cloud Console setup
+
+Before the OAuth flow can work, you must register the callback URL as an **Authorised redirect URI** in the Google Cloud Console.
+
+<Steps>
+  <Step title="Open your OAuth credentials">
+    In the [Google Cloud Console](https://console.cloud.google.com/), navigate to **APIs & Services → Credentials** and open your OAuth 2.0 Client ID.
+  </Step>
+  <Step title="Add the redirect URI">
+    Under **Authorised redirect URIs**, add:
+
+    ```
+    https://your-backend-domain/api/auth/google/callback
+    ```
+
+    For local development, also add:
+
+    ```
+    http://localhost:3000/api/auth/google/callback
+    ```
+  </Step>
+  <Step title="Save and copy credentials">
+    Copy the **Client ID** and **Client Secret** into your backend `.env` file as `CLIENT_ID` and `CLIENT_SECRET`.
+  </Step>
+</Steps>
+
+<Warning>
+  The JWT is transmitted in the URL query string during the redirect (`?token=<jwt>`). Although this is a single browser navigation and the token is moved to `localStorage` immediately, the token will appear in browser history and server access logs. The token is valid for **12 hours** — if a user's URL history is compromised, an attacker could use it within that window. For hardened environments, consider shortening the JWT expiry or switching to a one-time-use exchange code pattern.
+</Warning>

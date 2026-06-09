@@ -1,0 +1,182 @@
+---
+title: "EcoBot: AI-Powered Recycling Assistant"
+sidebarTitle: "EcoBot AI"
+description: "EcoBot is an AI chat assistant specialized in Colombian recycling regulations, with streaming responses, multi-turn chat history, and image-based waste identification."
+---
+
+EcoBot is Eco-It's conversational AI assistant, purpose-built to answer questions about recycling and environmental sustainability in the Colombian context. It refuses all off-topic requests and enforces Colombia's national color-coded bin system in every response — **White** (Blanco) for recyclables such as plastic, glass, and metals; **Black** (Negro) for non-recyclables like used paper towels and dirty napkins; and **Green** (Verde) for organic waste such as food scraps. EcoBot never uses Markdown formatting in its replies and always responds in Spanish.
+
+## AI Models
+
+EcoBot is backed by two models, accessed through the OpenRouter API.
+
+<CardGroup cols={2}>
+  <Card title="openrouter/free" icon="bolt">
+    The primary model used for all text-based conversations. Requests fall back automatically when the quota is exhausted.
+  </Card>
+  <Card title="google/gemini-2.5-flash-lite" icon="image">
+    The fallback model for text queries when `openrouter/free` hits a rate limit or quota error. Also the **exclusive** model used for all image analysis requests due to its multimodal capabilities.
+  </Card>
+</CardGroup>
+
+The fallback logic inspects HTTP status codes `429` and `402`, as well as error message keywords such as `rate_limit`, `quota`, `limit exceeded`, `insufficient`, and `credits`, before switching to Gemini.
+
+## Chat Sessions & Persistence
+
+Every conversation is stored as a `Chat` document in MongoDB, scoped to the authenticated user. Each chat holds a `title` (derived from the first 40 characters of the opening question) and an array of `mensajes` (messages) with `role` (`user` or `bot`) and `content` fields. A hard cap of **50 chats per user** is enforced automatically — when the limit is exceeded, the oldest chats are deleted.
+
+<CardGroup cols={2}>
+  <Card title="GET /api/ai/chats" icon="list">
+    Returns all chats for the authenticated user, sorted newest first. Includes `_id`, `title`, and `updatedAt`.
+  </Card>
+  <Card title="GET /api/ai/chats/:id" icon="magnifying-glass">
+    Returns the full message history of a single chat by its ID.
+  </Card>
+  <Card title="DELETE /api/ai/chats/:id" icon="trash">
+    Permanently deletes a single chat belonging to the authenticated user.
+  </Card>
+  <Card title="DELETE /api/ai/chats" icon="trash-can">
+    Permanently deletes **all** chats belonging to the authenticated user.
+  </Card>
+</CardGroup>
+
+All chat endpoints require a valid JWT in the `Authorization: Bearer <token>` header.
+
+## Text Chat — SSE Streaming
+
+Sending a question to EcoBot opens a **Server-Sent Events (SSE)** stream so that tokens are delivered to the client incrementally as they are generated.
+
+### Endpoint
+
+<ParamField body="pregunta" type="string" required>
+  The user's recycling or sustainability question, in plain text.
+</ParamField>
+
+<ParamField body="chatId" type="string">
+  Optional. The MongoDB `_id` of an existing chat session to continue. If omitted, a new chat is created automatically.
+</ParamField>
+
+```http
+POST /api/ai/consultar
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "pregunta": "¿Cómo reciclo una botella PET correctamente?",
+  "chatId": "664f1a2b3c4d5e6f7a8b9c0d"
+}
+```
+
+The server responds with `Content-Type: text/event-stream`. The first SSE event always carries the `chatId` so the client can associate subsequent chunks with the session:
+
+```
+data: {"chatId":"664f1a2b3c4d5e6f7a8b9c0d"}
+
+data: {"content":"Las botellas PET (código 1) son altamente reciclables."}
+
+data: {"content":" Enjuágalas, retira la tapa y deposítalas en la caneca blanca."}
+
+data: [DONE]
+```
+
+### Consuming the Stream — JavaScript Example
+
+The `consultarIA` function from `frontend/src/services/api.js` shows the canonical pattern for reading the SSE stream in the browser:
+
+```javascript
+import { consultarIA } from '@/services/api';
+
+async function sendMessage(question, chatId) {
+  const abortController = new AbortController();
+
+  await consultarIA(
+    question,
+    chatId,
+    (content, newChatId) => {
+      if (newChatId) {
+        // Store the chat ID returned with the first event
+        currentChatId = newChatId;
+      }
+      if (content) {
+        // Append each token chunk to the displayed message
+        appendToMessage(content);
+      }
+    },
+    abortController.signal
+  );
+}
+```
+
+The function reads the response body with a `ReadableStream` reader, splits incoming bytes by newline, strips the `data: ` prefix from each line, and parses the JSON payload. When the sentinel value `[DONE]` is received the stream terminates.
+
+## Image Analysis
+
+EcoBot can analyze a photograph of a waste item and suggest the correct Colombian bin for disposal.
+
+### Endpoint
+
+<ParamField body="imagen" type="string" required>
+  A base64-encoded data URL (e.g. `data:image/jpeg;base64,...`) of the image to analyze.
+</ParamField>
+
+<ParamField body="contexto" type="string">
+  Optional text providing additional context about the image (e.g. `"¿Es reciclable este envase?"`). Defaults to a generic analysis prompt.
+</ParamField>
+
+<ParamField body="chatId" type="string">
+  Optional. The `_id` of an existing chat to append the image interaction to. A new chat is created when omitted.
+</ParamField>
+
+```http
+POST /api/ai/analizar-imagen
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "imagen": "data:image/jpeg;base64,/9j/4AAQ...",
+  "contexto": "¿En qué caneca va este envase de vidrio?",
+  "chatId": "664f1a2b3c4d5e6f7a8b9c0d"
+}
+```
+
+<ResponseField name="success" type="boolean">
+  `true` when the analysis completes successfully.
+</ResponseField>
+
+<ResponseField name="data.respuesta" type="string">
+  EcoBot's plain-text analysis and disposal recommendation in Spanish.
+</ResponseField>
+
+<ResponseField name="data.chatId" type="string">
+  The `_id` of the chat session (existing or newly created).
+</ResponseField>
+
+Unlike text chat, image analysis is **not streamed** — the full response is returned in a single JSON body once Gemini finishes processing.
+
+## Content Moderation
+
+EcoBot enforces a strict zero-tolerance content policy at two layers: the AI's own system prompt, and a server-side post-processing check on every response.
+
+<Steps>
+  <Step title="Inappropriate language detected">
+    If the AI's reply contains the sentinel string `ALERTA_LENGUAJE_INAPROPIADO`, the backend calls `registrarAlertaContenido` without banning the user. A `Notification` document of type `alerta_lenguaje` is saved to MongoDB and the `admin:alerta_lenguaje` Socket.io event is broadcast to all connected admins in real time.
+  </Step>
+  <Step title="Obscene image detected">
+    If the Gemini response for an image begins with `ALERTA_OBSCENA:`, the backend automatically sets the user's status to `banned` for **3 days** and records the ban reason as `"Sistema: Envío de imagen con contenido obsceno."`. Two Socket.io events are then emitted to the `admins` room: `admin:alerta_obscena` (with the offending image payload) and `admin:usuario_baneado`.
+  </Step>
+  <Step title="Admin notification persisted">
+    All content moderation alerts are stored in the `Notification` collection with a TTL index of **7 days** (604,800 seconds), after which they are automatically purged from the database.
+  </Step>
+</Steps>
+
+<Warning>
+  Banned users receive a `403` HTTP response on all subsequent API calls. The frontend listens for this status code and dispatches a global `USER_BANNED` custom event to inform the UI and log the user out.
+</Warning>
+
+## Client-Side Input Validation
+
+The `ChatInput` component (`Charinput.jsx`) applies a real-time offensive-language check via the `useOfensiveValidator` hook before a message is ever sent to the server. It also strips emoji characters and any non-Latin-extended Unicode scripts (Cyrillic, Arabic, CJK, etc.), keeping input within the expected character set for Spanish text.
+
+<Note>
+  EcoBot's system prompt enforces the following rules on every response: replies must always be in **Spanish**, no Markdown formatting (no `**bold**`, no `### headings`, no asterisk lists) may appear in the output, and only plain text with simple numbered lists (`1.`, `2.`) or single hyphens (`-`) is allowed. These constraints apply equally to the primary `openrouter/free` model and the `google/gemini-2.5-flash-lite` fallback.
+</Note>

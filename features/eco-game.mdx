@@ -1,0 +1,70 @@
+---
+title: "Eco-Game: Educational WebGL Recycling Game"
+sidebarTitle: "Eco-Game"
+description: "Eco-It includes a Unity WebGL game embedded in the platform that teaches recycling through gameplay, with leaderboards, achievements, and gamification points."
+---
+
+Eco-Game is an interactive 3D recycling game built with Unity and exported as a WebGL application, embedded directly inside the Eco-It React SPA at the `/game` route. Players sort falling waste items into the correct Colombian color-coded bins, earning points for consecutive correct classifications and unlocking score multipliers for winning streaks. The game is designed to reinforce the same recycling knowledge promoted throughout the rest of the platform — in a format that is engaging for all ages.
+
+## Access & Route
+
+The `/game` route is a **private route**. Users must be logged in with a valid JWT session to access the game. Unauthenticated visitors are redirected to the login page.
+
+## WebGL Build Location
+
+The Unity WebGL build is served as a static asset from the frontend's `public` directory, making it available at the `/eco-juego/` path in both development and production.
+
+```
+frontend/public/eco-juego/
+├── index.html                          # Game entry point loaded by the iframe
+└── Build/
+    ├── DemoWebGL.loader.js             # Unity loader bootstrap script
+    ├── DemoWebGL.data.gz               # Compressed game data assets
+    ├── DemoWebGL.framework.js.gz       # Compressed Unity runtime framework
+    └── DemoWebGL.wasm.gz               # Compressed WebAssembly module
+```
+
+The `GameHero` component (`frontend/src/components/game/GameHero.jsx`) renders the game inside an `<iframe>` pointed at `/eco-juego/index.html`. The iframe is only mounted after the user clicks the **¡JUGAR AHORA!** button, preventing the large WebGL assets from loading on page entry.
+
+## Embedded Game Controls
+
+The game toolbar rendered above the iframe provides three controls:
+
+<CardGroup cols={3}>
+  <Card title="Exit Game" icon="arrow-left">
+    Returns the user to the pre-game lobby screen without unloading the page. The iframe is unmounted to free memory.
+  </Card>
+  <Card title="Restart" icon="rotate-left">
+    Reloads the iframe `src` attribute, triggering a full Unity runtime restart. Useful when the game enters an unrecoverable state.
+  </Card>
+  <Card title="Fullscreen" icon="maximize">
+    Calls the browser's Fullscreen API on the iframe container element. Supports `requestFullscreen`, `mozRequestFullScreen`, `webkitRequestFullscreen`, and `msRequestFullscreen` for cross-browser compatibility.
+  </Card>
+</CardGroup>
+
+## Gamification & Points
+
+Eco-It uses a platform-wide gamification system tied to each user's `puntos` field in the `User` MongoDB model. Correct classifications in the game award points, and the platform surfaces this progress through dedicated UI components on the game page:
+
+<CardGroup cols={2}>
+  <Card title="LeaderboardPreview" icon="trophy">
+    Displays the top-ranked users by total `puntos` accumulated, encouraging friendly competition between players.
+  </Card>
+  <Card title="AchievementsPreview" icon="star">
+    Shows unlocked and locked achievements based on recycling milestones, consecutive correct answers, and total games played.
+  </Card>
+</CardGroup>
+
+The `GameFeatures` component (`frontend/src/components/game/GameFeactures.jsx`) renders a four-cell feature grid beneath the hero section, highlighting the game's key pillars using the icons `Target` (accuracy challenges), `Trophy` (leaderboard), `Users` (multiplayer), and `Zap` (score multipliers).
+
+## How Points Are Posted Back
+
+<Note>
+  The Unity WebGL build communicates with the Eco-It platform through the authenticated user session. After a game round completes, the game calls a backend endpoint via the user's active JWT token to record the points earned. This means the game always operates within the platform's standard authentication and authorization flow — no separate game credentials are needed.
+</Note>
+
+## Browser Compatibility
+
+<Info>
+  WebGL games require a modern desktop or mobile browser with **hardware acceleration enabled**. For the best experience, use an up-to-date version of Chrome, Firefox, Edge, or Safari. If the game fails to load, go to your browser's settings and ensure hardware acceleration (GPU rendering) is turned on. Browsers in low-power or headless mode may not support the WebAssembly and WebGL APIs required by the Unity runtime.
+</Info>

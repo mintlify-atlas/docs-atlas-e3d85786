@@ -1,0 +1,322 @@
+---
+title: "Managing Recycling Points on the Eco-It Map"
+sidebarTitle: "Map Management"
+description: "Admins can create, update, delete, and toggle visibility of recycling collection points on the Eco-It interactive map using the admin API."
+---
+
+The Eco-It recycling map lets any registered user locate nearby collection infrastructure across the city of Garzón, Colombia. Admins manage this map through a full CRUD API backed by the `PuntoReciclaje` MongoDB model. Unlike the public-facing endpoint — which only returns points that are both `activo: true` and `visibleToUser: true` — the admin endpoints always return every point regardless of its flags, giving administrators a complete view of both published and hidden infrastructure.
+
+Every write operation (create, update, delete, toggle) emits a `map:updated` Socket.io event to **all connected clients**, so the public map refreshes in real time for every user currently viewing it without needing to reload the page.
+
+<Note>
+  All admin map endpoints are protected by both `verificarToken` (JWT validation) and `soloAdmin` (role check). Calls without a valid admin or superadmin token return `403 Forbidden`.
+</Note>
+
+## Point Types
+
+Eco-It supports five point types, each rendered with a distinct colour and icon on the Leaflet map:
+
+| `tipo` value | Label | Colour |
+|---|---|---|
+| `recycling` | Punto de Reciclaje | `#22c55e` (green) |
+| `ecobottle` | Eco-Botella | `#84cc16` (lime) |
+| `truck` | Carro Recolector | `#14b8a6` (teal) |
+| `container` | Contenedor | `#10b981` (emerald) |
+| `green_zone` | Zona Verde | `#4ade80` (light green) |
+
+## Point Model Fields
+
+<ResponseField name="nombre" type="string" required>
+  Display name of the collection point. Shown in map popups and the admin sidebar list.
+</ResponseField>
+
+<ResponseField name="tipo" type="string" required>
+  Point category. One of: `recycling`, `ecobottle`, `truck`, `container`, `green_zone`. Defaults to `"recycling"`.
+</ResponseField>
+
+<ResponseField name="lat" type="number" required>
+  WGS-84 latitude coordinate. The admin map UI constrains the viewable area to the Garzón bounding box (`[2.140, -75.690]` → `[2.240, -75.560]`), but the API accepts any valid latitude.
+</ResponseField>
+
+<ResponseField name="lng" type="number" required>
+  WGS-84 longitude coordinate.
+</ResponseField>
+
+<ResponseField name="descripcion" type="string">
+  Optional free-text description: schedules, accepted materials, special instructions. Displayed in map popups.
+</ResponseField>
+
+<ResponseField name="imagen" type="string">
+  Cloudinary `secure_url` for a photo of the point. Empty string when no image has been uploaded. The frontend renders images via the Cloudinary React SDK for automatic format and quality optimisation.
+</ResponseField>
+
+<ResponseField name="activo" type="boolean" default="true">
+  Master visibility switch. When `false`, the point does **not** appear on the public map and is excluded from the `map:updated` socket broadcast payload.
+</ResponseField>
+
+<ResponseField name="visibleToUser" type="boolean" default="true">
+  Secondary visibility flag. A point must have both `activo: true` **and** `visibleToUser: true` to appear in the public endpoint (`GET /api/puntos/public`). Admins see points with any combination of these flags.
+</ResponseField>
+
+### `activo` vs `visibleToUser`
+
+<Info>
+  Both flags control public visibility, but they serve different purposes:
+
+  - **`activo`** is the operational switch. Setting it to `false` means the infrastructure is temporarily offline (e.g., a collection truck is not running today). Use the toggle endpoint to flip it quickly.
+  - **`visibleToUser`** is a publishing control. A point can be `activo: true` but `visibleToUser: false` if it has been created and is being reviewed before going live, or if it should only be visible to administrators for planning purposes.
+
+  The public endpoint filters on `activo AND visibleToUser`. The admin endpoint returns all points unconditionally.
+</Info>
+
+---
+
+## API Endpoints
+
+### List All Points (Admin)
+
+Returns every recycling point in the database, including inactive and hidden ones, sorted by `createdAt` descending.
+
+```http
+GET /api/admin/map/points
+Authorization: Bearer <token>
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "puntos": [
+    {
+      "_id": "66a1b2c3d4e5f6a7b8c9d0e1",
+      "nombre": "Punto Central Plaza",
+      "tipo": "recycling",
+      "lat": 2.1953,
+      "lng": -75.6271,
+      "descripcion": "Abierto lunes a sábado de 7am a 5pm",
+      "imagen": "https://res.cloudinary.com/dwx3v7vex/image/upload/v1700000000/ecoit_map_points/sample.jpg",
+      "activo": true,
+      "visibleToUser": true,
+      "createdAt": "2024-10-01T08:00:00.000Z",
+      "updatedAt": "2024-11-01T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### Create a Point
+
+Creates a new `PuntoReciclaje` document. If the `imagen` field contains a base64-encoded data URI, the controller uploads it to Cloudinary (folder `ecoit_map_points`) and stores the returned `secure_url` instead. After saving, emits `map:updated` to all clients with the refreshed list of active, visible points.
+
+```http
+POST /api/admin/map/points
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+**Request body:**
+
+<ParamField body="nombre" type="string" required>
+  Name of the collection point.
+</ParamField>
+
+<ParamField body="tipo" type="string" default="recycling">
+  Point category. Must be one of `recycling`, `ecobottle`, `truck`, `container`, `green_zone`.
+</ParamField>
+
+<ParamField body="lat" type="number" required>
+  Latitude (WGS-84 decimal degrees).
+</ParamField>
+
+<ParamField body="lng" type="number" required>
+  Longitude (WGS-84 decimal degrees).
+</ParamField>
+
+<ParamField body="descripcion" type="string">
+  Optional description or instructions.
+</ParamField>
+
+<ParamField body="imagen" type="string">
+  Either a Cloudinary URL (if you already have one) or a base64 data URI (e.g. `data:image/jpeg;base64,...`). The backend will upload data URIs to Cloudinary automatically.
+</ParamField>
+
+<ParamField body="activo" type="boolean" default="true">
+  Whether the point is operationally active.
+</ParamField>
+
+<ParamField body="visibleToUser" type="boolean" default="true">
+  Whether the point should appear on the public map.
+</ParamField>
+
+**Complete JSON example:**
+
+```json
+{
+  "nombre": "Eco-Botella Parque Caldas",
+  "tipo": "ecobottle",
+  "lat": 2.1948,
+  "lng": -75.6265,
+  "descripcion": "Deposita botellas PET limpias y comprimidas. Horario: 6am–8pm.",
+  "imagen": "",
+  "activo": true,
+  "visibleToUser": true
+}
+```
+
+**cURL example:**
+
+```bash
+curl -X POST https://api.eco-it.co/api/admin/map/points \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombre": "Eco-Botella Parque Caldas",
+    "tipo": "ecobottle",
+    "lat": 2.1948,
+    "lng": -75.6265,
+    "descripcion": "Deposita botellas PET limpias y comprimidas.",
+    "activo": true,
+    "visibleToUser": true
+  }'
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "punto": {
+    "_id": "66b2c3d4e5f6a7b8c9d0e1f2",
+    "nombre": "Eco-Botella Parque Caldas",
+    "tipo": "ecobottle",
+    "lat": 2.1948,
+    "lng": -75.6265,
+    "descripcion": "Deposita botellas PET limpias y comprimidas.",
+    "imagen": "",
+    "activo": true,
+    "visibleToUser": true,
+    "createdAt": "2024-11-10T09:15:00.000Z"
+  }
+}
+```
+
+---
+
+### Update a Point
+
+Updates one or more fields of an existing point. Supply only the fields you want to change. If `imagen` is provided as a base64 data URI starting with `"data:image"`, the controller uploads it to Cloudinary and replaces the field value with the resulting URL. Emits `map:updated` after saving.
+
+```http
+PATCH /api/admin/map/points/:id
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+**Example — update description and deactivate:**
+
+```bash
+curl -X PATCH https://api.eco-it.co/api/admin/map/points/66b2c3d4e5f6a7b8c9d0e1f2 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "descripcion": "Temporalmente fuera de servicio.", "activo": false }'
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "punto": {
+    "_id": "66b2c3d4e5f6a7b8c9d0e1f2",
+    "nombre": "Eco-Botella Parque Caldas",
+    "activo": false,
+    "descripcion": "Temporalmente fuera de servicio.",
+    "updatedAt": "2024-11-12T14:00:00.000Z"
+  }
+}
+```
+
+---
+
+### Delete a Point
+
+Permanently removes the point document from MongoDB. The deletion is irreversible. Emits `map:updated` immediately after so users' maps stop showing the removed point.
+
+```http
+DELETE /api/admin/map/points/:id
+Authorization: Bearer <token>
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "mensaje": "Punto eliminado correctamente"
+}
+```
+
+---
+
+### Toggle Active State
+
+Flips the `activo` boolean of a point without requiring a full update payload. Equivalent to `activo = !activo`. This is the fastest way to temporarily hide or re-publish a point. Emits `map:updated` after saving.
+
+```http
+PATCH /api/admin/map/points/:id/toggle
+Authorization: Bearer <token>
+```
+
+**Success response (point was active, now inactive):**
+
+```json
+{
+  "success": true,
+  "punto": {
+    "_id": "66b2c3d4e5f6a7b8c9d0e1f2",
+    "nombre": "Eco-Botella Parque Caldas",
+    "activo": false
+  }
+}
+```
+
+---
+
+## Image Uploads with Cloudinary
+
+<Note>
+  Eco-It uses [Cloudinary](https://cloudinary.com) to host all map point images. You do not need to interact with Cloudinary directly — the backend handles the upload transparently.
+
+  **How it works:**
+  1. The frontend reads the selected image file as a base64 data URI using `FileReader`.
+  2. The data URI is sent in the `imagen` field of the create or update request body.
+  3. The `puntosController.js` detects the `data:image` prefix and calls `cloudinary.uploader.upload(imagen, { folder: "ecoit_map_points" })`.
+  4. The `secure_url` from Cloudinary's response is stored in the `imagen` field of the database document.
+  5. Subsequent reads return the Cloudinary CDN URL, which the React frontend renders via the `@cloudinary/react` `AdvancedImage` component for automatic WebP conversion and responsive quality.
+
+  If you supply a full Cloudinary URL (from a previous upload) in the `imagen` field, it is stored as-is without re-uploading.
+</Note>
+
+## Frontend Map Component
+
+The `AdminMap.jsx` component renders the admin map panel using **Leaflet + OpenStreetMap** (no API key required). The map is constrained to the Garzón metropolitan area via `maxBounds` and a `minZoom` of 13.
+
+Key interactions available in the UI:
+
+<Steps>
+  <Step title="Click 'Nuevo Punto'">
+    Opens the form panel on the right side of the map. Fill in the name, type, description, optional image, and coordinates.
+  </Step>
+  <Step title="Pick coordinates from the map">
+    Click the **Seleccionar desde el mapa** button to enter placement mode. The cursor changes to a crosshair. Clicking anywhere on the map captures the latitude and longitude into the form automatically.
+  </Step>
+  <Step title="Save">
+    Clicking **Crear punto** calls `POST /api/admin/map/points`. On success, the new marker appears on the map immediately for all users.
+  </Step>
+  <Step title="Edit or toggle">
+    Each point card in the left sidebar has hover-revealed icons for edit (pencil), toggle visibility (eye), and delete (trash). Selecting a point card opens its detail panel on the right.
+  </Step>
+</Steps>

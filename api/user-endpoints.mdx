@@ -1,0 +1,356 @@
+---
+title: "User Profile API Endpoints — GET/PUT/DELETE /api/user"
+sidebarTitle: "User Endpoints"
+description: "Endpoints for reading, updating, and deleting a user profile, changing passwords, and fetching public recycling map points."
+---
+
+The `/api/user` router exposes endpoints for authenticated users to manage their own profile, change their password, and permanently delete their account. It also hosts a public endpoint that serves recycling collection point data for the interactive map, and a mirror of the password-recovery flow for convenience on the client side.
+
+<Info>
+  All protected endpoints require an `Authorization: Bearer <token>` header. Tokens are issued by the auth endpoints and expire in 12 hours (login) or 7 days (registration verification).
+</Info>
+
+---
+
+## Profile endpoints
+
+### GET `/api/user/perfil`
+
+Returns the full profile of the currently authenticated user. The `password` field is never included in the response (`select: false` at the model level).
+
+**Authentication:** Required.
+
+**Response**
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  User profile object.
+</ResponseField>
+
+<ResponseField name="data.id" type="string">
+  MongoDB `_id`.
+</ResponseField>
+
+<ResponseField name="data.nombre" type="string">
+  First name.
+</ResponseField>
+
+<ResponseField name="data.apellido" type="string">
+  Last name.
+</ResponseField>
+
+<ResponseField name="data.email" type="string">
+  Email address (lowercase).
+</ResponseField>
+
+<ResponseField name="data.telefono" type="string">
+  Phone number.
+</ResponseField>
+
+<ResponseField name="data.edad" type="number">
+  Age.
+</ResponseField>
+
+<ResponseField name="data.avatar" type="string">
+  URL of the user's avatar image, or empty string if not set.
+</ResponseField>
+
+<ResponseField name="data.rol" type="string">
+  Role: `"user"`, `"admin"`, or `"superadmin"`.
+</ResponseField>
+
+<ResponseField name="data.status" type="string">
+  Account status: `"active"`, `"inactive"`, or `"banned"`.
+</ResponseField>
+
+<ResponseField name="data.banHasta" type="string | null">
+  ISO 8601 date-time until which the account is banned, or `null`.
+</ResponseField>
+
+<ResponseField name="data.banReason" type="string | null">
+  Human-readable reason for the ban, or `null`.
+</ResponseField>
+
+<ResponseField name="data.perfilCompleto" type="boolean">
+  `true` when all required profile fields have been filled in.
+</ResponseField>
+
+<ResponseField name="data.createdAt" type="string">
+  ISO 8601 account creation timestamp.
+</ResponseField>
+
+```bash
+curl -X GET https://api.eco-it.app/api/user/perfil \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "665f1a2b3c4d5e6f7a8b9c0d",
+    "nombre": "Valentina",
+    "apellido": "Ríos",
+    "email": "valentina@example.com",
+    "telefono": "3001234567",
+    "edad": 28,
+    "avatar": "https://res.cloudinary.com/eco-it/image/upload/v1/avatars/valentina.jpg",
+    "rol": "user",
+    "status": "active",
+    "banHasta": null,
+    "banReason": null,
+    "perfilCompleto": true,
+    "createdAt": "2024-06-04T15:30:00.000Z"
+  }
+}
+```
+
+---
+
+### PUT `/api/user/perfil`
+
+Updates one or more profile fields for the authenticated user. Only the fields included in the request body are modified — omitted fields are left unchanged.
+
+**Authentication:** Required.
+
+**Request body** — all fields are optional; include only those to update.
+
+<ParamField body="nombre" type="string">
+  New first name.
+</ParamField>
+
+<ParamField body="apellido" type="string">
+  New last name.
+</ParamField>
+
+<ParamField body="telefono" type="string">
+  New phone number.
+</ParamField>
+
+<ParamField body="edad" type="number">
+  New age.
+</ParamField>
+
+<ParamField body="avatar" type="string">
+  URL pointing to the user's new avatar image (e.g., a Cloudinary URL obtained after a separate upload).
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="boolean" />
+
+<ResponseField name="mensaje" type="string">
+  `"Perfil actualizado exitosamente"`.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Updated user data: `id`, `nombre`, `apellido`, `email`, `telefono`, `edad`, `avatar`.
+</ResponseField>
+
+```bash
+curl -X PUT https://api.eco-it.app/api/user/perfil \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "nombre": "Vale", "telefono": "3109876543" }'
+```
+
+```json
+{
+  "success": true,
+  "mensaje": "Perfil actualizado exitosamente",
+  "data": {
+    "id": "665f1a2b3c4d5e6f7a8b9c0d",
+    "nombre": "Vale",
+    "apellido": "Ríos",
+    "email": "valentina@example.com",
+    "telefono": "3109876543",
+    "edad": 28,
+    "avatar": "https://res.cloudinary.com/eco-it/image/upload/v1/avatars/valentina.jpg"
+  }
+}
+```
+
+---
+
+### DELETE `/api/user/perfil`
+
+Permanently deletes the authenticated user's account. This action is irreversible. An audit log entry is created automatically.
+
+**Authentication:** Required.
+
+**Request body:** None.
+
+**Response**
+
+<ResponseField name="success" type="boolean" />
+
+<ResponseField name="mensaje" type="string">
+  `"Cuenta eliminada exitosamente"`.
+</ResponseField>
+
+<Warning>
+  Account deletion is permanent. All user data, chat history, and saved preferences are removed. Consider warning the user in the UI with a confirmation dialog before calling this endpoint.
+</Warning>
+
+```bash
+curl -X DELETE https://api.eco-it.app/api/user/perfil \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{ "success": true, "mensaje": "Cuenta eliminada exitosamente" }
+```
+
+---
+
+## Password change
+
+### PUT `/api/user/cambiar-password`
+
+Allows an authenticated user to change their own password by supplying the current password for verification. The new password is hashed automatically by the Mongoose `pre('save')` hook.
+
+**Authentication:** Required.
+
+<Note>
+  This endpoint is for **authenticated** users who know their current password. For unauthenticated password recovery via email code, use the `/api/auth/recuperar-password` flow or the recovery mirror routes documented below.
+</Note>
+
+**Request body**
+
+<ParamField body="passwordActual" type="string" required>
+  The user's current (existing) password in plain text.
+</ParamField>
+
+<ParamField body="nuevaPassword" type="string" required>
+  The desired new password. Minimum 6 characters (validation middleware enforces this; the User model requires at least 8 in production).
+</ParamField>
+
+**Response**
+
+<ResponseField name="success" type="boolean" />
+
+<ResponseField name="mensaje" type="string">
+  `"Contraseña cambiada exitosamente"` on success.
+</ResponseField>
+
+```bash
+curl -X PUT https://api.eco-it.app/api/user/cambiar-password \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "passwordActual": "MiClave2024!", "nuevaPassword": "MiClaveNueva2025!" }'
+```
+
+```json
+{ "success": true, "mensaje": "Contraseña cambiada exitosamente" }
+```
+
+**Error cases**
+
+| Condition | Status | Message |
+|-----------|--------|---------|
+| Either field missing | `400` | `"Debes proporcionar la contraseña actual y la nueva"` |
+| New password too short | `400` | `"La nueva contraseña debe tener al menos 8 caracteres"` |
+| Current password incorrect | `401` | `"La contraseña actual es incorrecta"` |
+| User not found | `404` | `"Usuario no encontrado"` |
+
+---
+
+## Public map points
+
+### GET `/api/user/map-points`
+
+Returns all recycling collection points that are both `activo: true` and `visibleToUser: true`. This is the data source for the Eco-It interactive Leaflet map displayed to regular users.
+
+**Authentication:** Not required (public endpoint).
+
+**Response**
+
+<ResponseField name="success" type="boolean" />
+
+<ResponseField name="puntos" type="array">
+  Array of processed point objects, sorted newest first.
+</ResponseField>
+
+<ResponseField name="puntos[].id" type="string">
+  MongoDB `_id` of the point.
+</ResponseField>
+
+<ResponseField name="puntos[].nombre" type="string">
+  Display name of the collection point.
+</ResponseField>
+
+<ResponseField name="puntos[].tipo" type="string">
+  Point category. One of: `"recycling"`, `"ecobottle"`, `"truck"`, `"container"`, `"green_zone"`.
+</ResponseField>
+
+<ResponseField name="puntos[].lat" type="number">
+  Latitude coordinate.
+</ResponseField>
+
+<ResponseField name="puntos[].lng" type="number">
+  Longitude coordinate.
+</ResponseField>
+
+<ResponseField name="puntos[].imagen" type="string">
+  Cloudinary URL of the point's photo, or empty string.
+</ResponseField>
+
+<ResponseField name="puntos[].descripcion" type="string">
+  Short description of the collection point.
+</ResponseField>
+
+```bash
+curl -X GET https://api.eco-it.app/api/user/map-points
+```
+
+```json
+{
+  "success": true,
+  "puntos": [
+    {
+      "id": "6660aabb1122334455667788",
+      "nombre": "Punto Verde Chapinero",
+      "tipo": "recycling",
+      "lat": 4.6486,
+      "lng": -74.0596,
+      "imagen": "https://res.cloudinary.com/eco-it/image/upload/v1/ecoit_map_points/punto_verde.jpg",
+      "descripcion": "Punto de reciclaje en el parque principal de Chapinero."
+    }
+  ]
+}
+```
+
+<Note>
+  The same data is also available at `GET /api/map/points` via a dedicated map router. Both endpoints query identical data from the `PuntoReciclaje` collection. See the [Map Endpoints](/api/map-endpoints) page for full schema documentation.
+</Note>
+
+---
+
+## Password recovery mirror routes
+
+The following recovery routes are mounted on `/api/user` for client-side convenience. They call the same controller functions as their `/api/auth` counterparts and behave identically. Refer to the [Auth Endpoints](/api/auth-endpoints) page for complete documentation.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/user/recuperar-password` | Send a 6-digit recovery code to the user's email. |
+| `POST` | `/api/user/verificar-codigo` | Verify the recovery code (pre-reset validation step). |
+| `POST` | `/api/user/reenviar-codigo` | Resend the recovery code (3-minute cooldown). |
+| `POST` | `/api/user/restablecer-password` | Set a new password using a valid code. |
+
+<Note>
+  These routes are public (no JWT required) because the user cannot authenticate when they have forgotten their password.
+</Note>
+
+---
+
+## Error reference
+
+| HTTP Status | Cause |
+|-------------|-------|
+| `400` | Validation error (missing fields, password too short) |
+| `401` | Missing or invalid JWT; incorrect current password |
+| `404` | Authenticated user's record not found in the database |
+| `500` | Internal server error |

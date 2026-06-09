@@ -1,0 +1,144 @@
+---
+title: "Eco-It REST API Reference Overview"
+sidebarTitle: "Overview"
+description: "Eco-It exposes a REST API at /api with 7 route groups covering auth, users, AI, maps, admin, carousel, and contact. All responses are JSON."
+---
+
+The Eco-It backend exposes a versioned REST API that powers every feature of the platform — from user authentication and AI-driven environmental consultations to interactive maps, content carousels, and administrative management. Every endpoint lives under the `/api` prefix, accepts and returns JSON, and is protected by rate limiting and, where appropriate, JWT-based authentication.
+
+## Base URL
+
+The server listens on port `3000` by default. The value is controlled by the `PORT` environment variable.
+
+| Environment | Base URL |
+|-------------|----------|
+| Development | `http://localhost:3000` |
+| Production  | Configured via the `VITE_BACKEND_URL` environment variable in the frontend (e.g. `https://backend-production-1e6e.up.railway.app`) |
+
+<Note>
+All CORS-allowed origins are explicitly whitelisted. In development the accepted origins are `http://localhost:5173`, `http://localhost:5174`, and `http://localhost:5175`. In production, `https://eco-it.netlify.app` is the permitted origin. Requests from any other origin will be rejected with a CORS error.
+</Note>
+
+## Response Shape
+
+Every Eco-It API response is JSON. Successful responses include a `success: true` field alongside the relevant data payload. Error responses include a descriptive `error` or `message` string. The two base shapes are:
+
+```json Successful response
+{
+  "success": true,
+  "...": "additional fields vary by endpoint"
+}
+```
+
+```json Error response
+{
+  "error": "Human-readable error description"
+}
+```
+
+When a client requests a route that does not exist, the API returns a `404` with the following body — including the attempted path for easy debugging:
+
+```json 404 – Endpoint not found
+{
+  "success": false,
+  "mensaje": "Endpoint no encontrado",
+  "ruta": "/api/some/unknown/path"
+}
+```
+
+## Route Groups
+
+All API functionality is organised into seven route groups. Click any card to navigate to the full endpoint reference for that group.
+
+<CardGroup cols={2}>
+  <Card title="/api/auth" icon="lock" href="/api/auth-endpoints">
+    User registration, login (email/password and Google OAuth), email verification, and password reset flows.
+  </Card>
+  <Card title="/api/user" icon="user" href="/api/user-endpoints">
+    Profile retrieval and updates, password change, account deletion, and password-recovery code verification.
+  </Card>
+  <Card title="/api/ai" icon="brain" href="/api/ai-endpoints">
+    AI-powered environmental consultation via streaming chat, image analysis, chat history management, and contextual suggestions.
+  </Card>
+  <Card title="/api/map" icon="map" href="/api/map-endpoints">
+    Public map data endpoints for rendering interactive environmental maps within the platform.
+  </Card>
+  <Card title="/api/admin" icon="shield-halved" href="/api/admin-endpoints">
+    Administrative operations including user management, ban controls, and platform-wide statistics. Requires `admin` or `superadmin` role.
+  </Card>
+  <Card title="/api/carousel" icon="images" href="/api/carousel-endpoints">
+    Public and admin-facing carousel slide management: creation, reordering, update, and deletion of homepage slides.
+  </Card>
+  <Card title="/api/contact" icon="envelope" href="/api/contact-endpoints">
+    Contact form submission endpoint for inbound user inquiries.
+  </Card>
+</CardGroup>
+
+## Rate Limiting
+
+Eco-It applies two layers of rate limiting to protect the API against spam, brute-force, and DDoS attacks. Both limiters operate on a **15-minute sliding window** and use standard `RateLimit-*` response headers.
+
+| Limiter | Applies to | Max requests / 15 min | Trigger |
+|---------|------------|-----------------------|---------|
+| **Global limiter** | All routes | 300 per IP | General anti-spam / DDoS |
+| **Auth limiter** | `/api/auth` routes | 15 per IP | Brute-force login/register protection |
+
+When the limit is exceeded the API responds with HTTP `429` and a JSON body:
+
+```json 429 – Global rate limit exceeded
+{
+  "success": false,
+  "mensaje": "Demasiadas peticiones desde esta IP, por favor intenta de nuevo en 15 minutos."
+}
+```
+
+```json 429 – Auth rate limit exceeded
+{
+  "success": false,
+  "mensaje": "Demasiados intentos de acceso desde esta IP. Por favor, intenta de nuevo en 15 minutos."
+}
+```
+
+<Tip>
+During development, if you hit the auth rate limit while testing login or registration flows, wait 15 minutes or restart the backend server to reset the in-memory counter.
+</Tip>
+
+## Request Format
+
+<Info>
+All request bodies must be sent as `application/json`. The `Content-Type: application/json` header is required for any `POST`, `PUT`, `PATCH`, or `DELETE` request that includes a body. The maximum accepted body size is **10 MB**.
+</Info>
+
+The accepted HTTP methods across all route groups are:
+
+`GET` `POST` `PUT` `PATCH` `DELETE` `OPTIONS`
+
+## Security
+
+The API uses several security layers in addition to rate limiting:
+
+- **Helmet** — sets secure HTTP response headers including a Content Security Policy that restricts image sources to Cloudinary and OpenStreetMap tile servers.
+- **CORS** — only explicitly whitelisted origins may call the API; credentials are supported for session-based OAuth flows.
+- **NoSQL injection sanitisation** — `express-mongo-sanitize` sanitises `req.body` and `req.params` before they reach any route handler.
+- **JWT authentication** — protected routes require a valid Bearer token issued by the server (see [Authentication](/api/authentication)).
+
+## Common HTTP Status Codes
+
+| Code | Meaning |
+|------|---------|
+| `200` | Request succeeded |
+| `201` | Resource created successfully |
+| `400` | Bad request — missing or invalid parameters |
+| `401` | Unauthorized — missing, expired, or invalid JWT |
+| `403` | Forbidden — insufficient role, or account is banned |
+| `404` | Endpoint not found |
+| `429` | Too many requests — rate limit exceeded |
+| `500` | Internal server error |
+
+## Real-Time Events (Socket.io)
+
+In addition to the REST API, Eco-It exposes a **Socket.io** server on the same HTTP port. The socket layer requires a valid JWT passed in the `auth.token` field of the Socket.io handshake (or in the `Authorization` header). It is used to broadcast real-time online-user counts and user connection/disconnection state changes to connected admin clients.
+
+<Note>
+Socket.io events are not part of the REST API contract and are documented separately. The REST endpoints described in this reference are fully functional without a socket connection.
+</Note>

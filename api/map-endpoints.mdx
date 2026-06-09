@@ -1,0 +1,207 @@
+---
+title: "Recycling Map API Endpoints — GET /api/map"
+sidebarTitle: "Map Endpoints"
+description: "Public endpoint to fetch all active and visible recycling collection points for display on the Eco-It interactive Leaflet map."
+---
+
+The `/api/map` router exposes a single public endpoint that serves recycling collection point data for the Eco-It interactive Leaflet map. No authentication is required — the map is visible to all visitors of the platform. Only points that are both active (`activo: true`) and marked as user-visible (`visibleToUser: true`) are returned; internal or deactivated points are always excluded from this response.
+
+---
+
+## GET `/api/map/points`
+
+Returns an array of processed recycling collection points, sorted from most recently created to oldest. Each object contains the geographic coordinates and descriptive metadata needed to render a marker on the map.
+
+**Authentication:** Not required.
+
+**Request body:** None.
+
+**Query parameters:** None.
+
+**Response**
+
+<ResponseField name="success" type="boolean">
+  `true` on a successful query.
+</ResponseField>
+
+<ResponseField name="puntos" type="array">
+  Array of recycling point objects. Empty array (`[]`) if no active, visible points exist.
+</ResponseField>
+
+<ResponseField name="puntos[].id" type="string">
+  MongoDB `_id` of the recycling point document.
+</ResponseField>
+
+<ResponseField name="puntos[].nombre" type="string">
+  Display name of the collection point, shown in the Leaflet popup. Required field — always present.
+</ResponseField>
+
+<ResponseField name="puntos[].tipo" type="string">
+  Category of the collection point. Determines the map marker icon. One of:
+
+  | Value | Description |
+  |-------|-------------|
+  | `"recycling"` | General recycling point |
+  | `"ecobottle"` | Eco-bottle / plastic bottle deposit |
+  | `"truck"` | Mobile recycling truck stop |
+  | `"container"` | Large recycling container |
+  | `"green_zone"` | Green zone / environmental area |
+</ResponseField>
+
+<ResponseField name="puntos[].lat" type="number">
+  Latitude of the point in decimal degrees (WGS 84). Required.
+</ResponseField>
+
+<ResponseField name="puntos[].lng" type="number">
+  Longitude of the point in decimal degrees (WGS 84). Required.
+</ResponseField>
+
+<ResponseField name="puntos[].imagen" type="string">
+  Cloudinary HTTPS URL of the point's photo. Empty string (`""`) if no image has been uploaded.
+</ResponseField>
+
+<ResponseField name="puntos[].descripcion" type="string">
+  Short description of the collection point, shown in the map popup body. Empty string if not provided.
+</ResponseField>
+
+```bash
+curl -X GET https://api.eco-it.app/api/map/points
+```
+
+**Full example response — one point of each type**
+
+```json
+{
+  "success": true,
+  "puntos": [
+    {
+      "id": "6660aabb1122334455667701",
+      "nombre": "Punto Verde Chapinero",
+      "tipo": "recycling",
+      "lat": 4.6486,
+      "lng": -74.0596,
+      "imagen": "https://res.cloudinary.com/eco-it/image/upload/v1/ecoit_map_points/chapinero.jpg",
+      "descripcion": "Punto de reciclaje en el parque principal de Chapinero. Acepta plástico, vidrio y metales."
+    },
+    {
+      "id": "6660aabb1122334455667702",
+      "nombre": "Ecobot Usaquén Centro Comercial",
+      "tipo": "ecobottle",
+      "lat": 4.6964,
+      "lng": -74.0327,
+      "imagen": "https://res.cloudinary.com/eco-it/image/upload/v1/ecoit_map_points/ecobottle_usaquen.jpg",
+      "descripcion": "Máquina dispensadora de puntos por botellas PET. Ubicada en el primer piso del centro comercial."
+    },
+    {
+      "id": "6660aabb1122334455667703",
+      "nombre": "Ruta Camión Reciclador — Barrio La Candelaria",
+      "tipo": "truck",
+      "lat": 4.5973,
+      "lng": -74.0749,
+      "imagen": "",
+      "descripcion": "El camión recolector pasa los miércoles y viernes entre 7:00 am y 9:00 am."
+    },
+    {
+      "id": "6660aabb1122334455667704",
+      "nombre": "Contenedor Reciclaje Teusaquillo",
+      "tipo": "container",
+      "lat": 4.6318,
+      "lng": -74.0766,
+      "imagen": "https://res.cloudinary.com/eco-it/image/upload/v1/ecoit_map_points/container_teusaquillo.jpg",
+      "descripcion": "Contenedor de gran capacidad para cartón y papel. Vaciado diario por la empresa de aseo."
+    },
+    {
+      "id": "6660aabb1122334455667705",
+      "nombre": "Zona Verde Parque El Virrey",
+      "tipo": "green_zone",
+      "lat": 4.6656,
+      "lng": -74.0535,
+      "imagen": "https://res.cloudinary.com/eco-it/image/upload/v1/ecoit_map_points/virrey.jpg",
+      "descripcion": "Área de compostaje comunitario y huerta urbana. Talleres gratuitos los sábados."
+    }
+  ]
+}
+```
+
+---
+
+## Using the data with Leaflet
+
+The `lat` and `lng` fields map directly to Leaflet's `[lat, lng]` coordinate format. Use the `tipo` field to select a custom marker icon per category.
+
+```javascript
+const response = await fetch("https://api.eco-it.app/api/map/points");
+const { puntos } = await response.json();
+
+const iconMap = {
+  recycling:  L.icon({ iconUrl: "/icons/recycling.png",  iconSize: [32, 32] }),
+  ecobottle:  L.icon({ iconUrl: "/icons/ecobottle.png",  iconSize: [32, 32] }),
+  truck:      L.icon({ iconUrl: "/icons/truck.png",       iconSize: [32, 32] }),
+  container:  L.icon({ iconUrl: "/icons/container.png",  iconSize: [32, 32] }),
+  green_zone: L.icon({ iconUrl: "/icons/green_zone.png", iconSize: [32, 32] }),
+};
+
+puntos.forEach(punto => {
+  L.marker([punto.lat, punto.lng], { icon: iconMap[punto.tipo] })
+    .bindPopup(`
+      <strong>${punto.nombre}</strong><br/>
+      ${punto.descripcion}
+      ${punto.imagen ? `<br/><img src="${punto.imagen}" width="200"/>` : ""}
+    `)
+    .addTo(map);
+});
+```
+
+---
+
+## Real-time updates via Socket.IO
+
+When an admin creates, updates, deletes, or toggles a collection point, the server emits a `map:updated` event over Socket.IO with a fresh snapshot of all active, visible points. Subscribe to this event to keep the map in sync without polling.
+
+```javascript
+const socket = io("https://api.eco-it.app");
+
+socket.on("map:updated", ({ puntos }) => {
+  // Clear existing markers and re-render with the updated array
+  clearMapMarkers();
+  renderMarkers(puntos);
+});
+```
+
+<Tip>
+  Combine the initial REST fetch with the Socket.IO subscription: load points on page mount with `GET /api/map/points`, then update the map reactively whenever a `map:updated` event arrives.
+</Tip>
+
+---
+
+## `PuntoReciclaje` schema reference
+
+The following table documents every field of the underlying `PuntoReciclaje` Mongoose model. The public endpoint returns only the subset listed in the response above.
+
+| Field | Type | Required | Default | Notes |
+|-------|------|----------|---------|-------|
+| `_id` | ObjectId | — | auto | MongoDB document ID |
+| `nombre` | String | ✅ | — | Display name |
+| `tipo` | String (enum) | ✅ | `"recycling"` | See type table above |
+| `lat` | Number | ✅ | — | WGS 84 latitude |
+| `lng` | Number | ✅ | — | WGS 84 longitude |
+| `descripcion` | String | ❌ | `""` | Popup body text |
+| `imagen` | String | ❌ | `""` | Cloudinary URL |
+| `activo` | Boolean | ❌ | `true` | Hidden from public if `false` |
+| `visibleToUser` | Boolean | ❌ | `true` | Hidden from public if `false` |
+| `createdAt` | Date | — | auto | Mongoose timestamp |
+| `updatedAt` | Date | — | auto | Mongoose timestamp |
+
+---
+
+<Note>
+  Full CRUD management of collection points (create, update, delete, toggle active state) is available exclusively to administrators at `/api/admin/map/points`. These admin endpoints require a JWT with `rol: "admin"` or `rol: "superadmin"` and are not part of the public API surface.
+</Note>
+
+---
+
+## Error reference
+
+| HTTP Status | Cause |
+|-------------|-------|
+| `500` | Database query failure; internal server error |

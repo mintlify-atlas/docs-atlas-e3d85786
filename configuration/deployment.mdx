@@ -1,0 +1,223 @@
+---
+title: "Deploying Eco-It to Railway and Netlify"
+sidebarTitle: "Deployment"
+description: "Deploy the Eco-It backend to Railway and the frontend React SPA to Netlify, with CORS, redirects, and environment variable configuration."
+---
+
+Eco-It's production architecture separates the backend from the frontend across two purpose-built hosting platforms. The **Node.js/Express API** (including Socket.IO, MongoDB via Mongoose, and the OpenRouter-powered EcoBot) runs on [Railway](https://railway.app/), which handles automatic HTTPS, zero-configuration Node.js detection, and the `PORT` injection that the server already reads from `process.env`. The **React SPA** is deployed to [Netlify](https://netlify.com/) — as confirmed by `frontend/.env.production` pointing to a `*.up.railway.app` backend and the `frontend/public/_redirects` file that enables client-side SPA routing. The sections below walk through each deployment target in order, followed by the external service setup required before either service can fully start.
+
+---
+
+## External services setup
+
+Before deploying the application itself, provision the three external services that both environments depend on.
+
+### MongoDB Atlas
+
+<Steps>
+  <Step title="Create a free cluster">
+    Sign in to [MongoDB Atlas](https://www.mongodb.com/atlas) and create a new **M0** (free-tier) shared cluster. Choose a region close to your Railway deployment for lower latency.
+  </Step>
+  <Step title="Create a database user">
+    In **Database Access**, add a new database user with a strong password. Grant the **Atlas admin** or **readWriteAnyDatabase** built-in role.
+  </Step>
+  <Step title="Whitelist Railway's egress IPs">
+    In **Network Access**, add the IP addresses used by your Railway service. During initial setup you may use `0.0.0.0/0` (allow all), but restrict this to Railway's static IP ranges once your service is stable.
+  </Step>
+  <Step title="Copy the connection string">
+    From **Database → Connect → Drivers**, copy the `mongodb+srv://` connection string. Replace `<password>` with the user password you created. This becomes your `MONGODB_URI` environment variable.
+  </Step>
+</Steps>
+
+### Cloudinary
+
+<Steps>
+  <Step title="Create a free account">
+    Register at [cloudinary.com](https://cloudinary.com). The free tier provides 25 GB of storage and 25 GB of monthly bandwidth, which is sufficient for development and moderate production usage.
+  </Step>
+  <Step title="Note your credentials">
+    From the Cloudinary **Dashboard**, record the three values that map directly to Eco-It's environment variables:
+
+    | Dashboard field | Environment variable       |
+    |-----------------|----------------------------|
+    | Cloud name      | `CLOUDINARY_CLOUD_NAME`    |
+    | API Key         | `CLOUDINARY_API_KEY`       |
+    | API Secret      | `CLOUDINARY_API_SECRET`    |
+  </Step>
+</Steps>
+
+### Google OAuth
+
+<Steps>
+  <Step title="Create OAuth 2.0 credentials">
+    In the [Google Cloud Console](https://console.cloud.google.com/), navigate to **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID**. Choose **Web application** as the application type.
+  </Step>
+  <Step title="Add the authorized redirect URI">
+    Under **Authorized redirect URIs**, add the Railway callback URL:
+
+    ```
+    https://your-backend.up.railway.app/api/auth/google/callback
+    ```
+
+    Replace `your-backend` with your actual Railway service subdomain. This URI must match exactly what `passport-google-oauth20` sends during the OAuth handshake.
+  </Step>
+  <Step title="Copy client ID and secret">
+    After saving, copy the **Client ID** and **Client Secret** — these become `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+  </Step>
+</Steps>
+
+---
+
+## Backend deployment (Railway)
+
+Railway detects Node.js projects automatically and runs the `start` script from `backend/package.json` (`node index.js`). No `Dockerfile` or `Procfile` is required.
+
+<Steps>
+  <Step title="Create a new Railway project">
+    Log in to [Railway](https://railway.app/) and click **New Project → Deploy from GitHub repo**. Authorize Railway to access your repository and select the **Eco-It** repo.
+  </Step>
+  <Step title="Set the root directory">
+    In your service settings, set **Root Directory** to `backend/`. Railway will then use `backend/package.json` to install dependencies and determine the start command.
+  </Step>
+  <Step title="Configure the start command">
+    Railway auto-detects the `start` script, so no manual override is usually needed. If you need to set it explicitly, use:
+
+    ```bash
+    node index.js
+    ```
+  </Step>
+  <Step title="Add environment variables">
+    Open **Variables** in the Railway service panel and add every backend variable. Use the values from your MongoDB Atlas, Cloudinary, Google Cloud Console, and OpenRouter setups:
+
+    ```dotenv
+    MONGODB_URI=mongodb+srv://<user>:<password>@cluster0.mongodb.net/ecoit?retryWrites=true&w=majority
+    JWT_SECRET=<long-random-string>
+    NODE_ENV=production
+    GOOGLE_CLIENT_ID=<your-google-client-id>
+    GOOGLE_CLIENT_SECRET=<your-google-client-secret>
+    FRONT_URL=https://eco-it.netlify.app
+    CLOUDINARY_CLOUD_NAME=<your-cloud-name>
+    CLOUDINARY_API_KEY=<your-api-key>
+    CLOUDINARY_API_SECRET=<your-api-secret>
+    OPENROUTER_API_KEY=<your-openrouter-key>
+    ```
+
+    Railway injects `PORT` automatically — do not set it manually.
+  </Step>
+  <Step title="Deploy and verify">
+    Trigger a deployment. Once the build log shows `✅ Conectado a MongoDB` and `Servidor corriendo en http://localhost:PORT`, your API is live. Visit `https://your-backend.up.railway.app/` — you should receive:
+
+    ```json
+    {
+      "success": true,
+      "mensaje": "API de Eco-It funcionando correctamente",
+      "version": "1.0.0"
+    }
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The CORS `origin` allowlist in `backend/index.js` is hardcoded to include `http://localhost:5173`, `http://localhost:5174`, `http://localhost:5175`, and `https://eco-it.netlify.app`. The same origins are mirrored in the Socket.IO server configuration. If you deploy the frontend to a **different domain**, you must update both the `cors()` middleware and the `new Server(httpServer, { cors: { origin: [...] } })` call in `backend/index.js` to include your actual production URL, then redeploy the backend.
+</Note>
+
+<Tip>
+  Railway automatically provisions a TLS certificate and serves your service over HTTPS at a `*.up.railway.app` subdomain — no Nginx, no Let's Encrypt setup, and no extra configuration required. Node.js projects are detected by the presence of `package.json`; Railway reads the `engines` field if present, or defaults to a recent LTS release.
+</Tip>
+
+---
+
+## Frontend deployment (Netlify)
+
+The frontend is a Vite-built React SPA. Netlify serves the static output from `frontend/dist/` and uses the `frontend/public/_redirects` file to handle client-side navigation.
+
+<Steps>
+  <Step title="Connect the repo to Netlify">
+    Log in to [Netlify](https://netlify.com/) and click **Add new site → Import an existing project**. Authorize Netlify to access your GitHub account and select the **Eco-It** repository.
+  </Step>
+  <Step title="Set the build command">
+    In the build settings, enter the build command. You can use either of the following (they are equivalent because the root `package.json` delegates to the frontend workspace):
+
+    ```bash
+    pnpm --filter frontend build
+    ```
+
+    Or the root-level shortcut:
+
+    ```bash
+    pnpm build
+    ```
+  </Step>
+  <Step title="Set the publish directory">
+    Set the **Publish directory** to:
+
+    ```
+    frontend/dist
+    ```
+
+    Vite outputs the production build to `frontend/dist` by default.
+  </Step>
+  <Step title="Add environment variables">
+    In **Site configuration → Environment variables**, add the two frontend variables. Use the Railway URL you obtained after deploying the backend:
+
+    ```dotenv
+    VITE_BACKEND_URL=https://your-backend.up.railway.app/api
+    VITE_SOCKET_URL=https://your-backend.up.railway.app
+    ```
+
+    These are injected at **build time** by Vite — they are baked into the static bundle and are not secret. Do not place sensitive credentials here.
+  </Step>
+  <Step title="Verify SPA routing">
+    Eco-It ships with `frontend/public/_redirects` containing:
+
+    ```
+    /*    /index.html   200
+    ```
+
+    Netlify copies this file into `frontend/dist/` during the build and uses it to serve `index.html` for every route, enabling React Router to handle client-side navigation without 404 errors on page refresh or direct URL access. **No manual configuration is needed** — the file is already in place.
+  </Step>
+  <Step title="Trigger a deploy and test">
+    Click **Deploy site**. Once the build finishes, open your Netlify URL and confirm the application loads, authentication flows work, and API requests reach the Railway backend without CORS errors.
+  </Step>
+</Steps>
+
+---
+
+## Production environment variable summary
+
+For quick reference, here is a complete production `.env` for the backend. Place this in `backend/.env` for local production simulation, or enter each key-value pair directly into Railway's **Variables** panel.
+
+```dotenv
+# ── Database ────────────────────────────────────────────────
+MONGODB_URI=mongodb+srv://<user>:<password>@cluster0.mongodb.net/ecoit?retryWrites=true&w=majority
+
+# ── Auth ────────────────────────────────────────────────────
+JWT_SECRET=<generate-with-openssl-rand-hex-64>
+
+# ── Server ──────────────────────────────────────────────────
+# PORT is injected automatically by Railway — do not set it here.
+NODE_ENV=production
+
+# ── Google OAuth ────────────────────────────────────────────
+GOOGLE_CLIENT_ID=<your-google-client-id>.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-<your-google-client-secret>
+
+# ── CORS / OAuth redirect base URL ──────────────────────────
+FRONT_URL=https://eco-it.netlify.app
+
+# ── Cloudinary ──────────────────────────────────────────────
+CLOUDINARY_CLOUD_NAME=<your-cloud-name>
+CLOUDINARY_API_KEY=<your-api-key>
+CLOUDINARY_API_SECRET=<your-api-secret>
+
+# ── OpenRouter (EcoBot) ─────────────────────────────────────
+OPENROUTER_API_KEY=sk-or-v1-<your-openrouter-key>
+```
+
+<Note>
+  The CORS configuration in `backend/index.js` is applied identically to both the Express HTTP middleware and the Socket.IO server. Both use the same hardcoded `origin` array: `['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'https://eco-it.netlify.app']`. If you fork Eco-It and deploy the frontend to a custom domain, you must update the `origin` array in **both** places within `index.js` and redeploy the backend before the frontend will be able to make credentialed API requests or establish WebSocket connections.
+</Note>
+
+<Tip>
+  Railway detects your Node.js version automatically from the `engines` field in `package.json` (if present) and always provides free HTTPS via a managed TLS certificate. There is no configuration needed for SSL termination, reverse proxying, or process management — Railway runs `node index.js` directly and restarts the process on crash. For zero-downtime deploys, enable **Health Check** in the Railway service settings and point it to the `/` root endpoint, which returns `{ "success": true }` once the server and MongoDB connection are both ready.
+</Tip>

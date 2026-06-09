@@ -1,0 +1,304 @@
+---
+title: "Carousel Slides API Endpoints — /api/carousel"
+sidebarTitle: "Carousel Endpoints"
+description: "Endpoints to fetch public carousel slides for the home page, and admin endpoints to create, update, delete, and reorder slides with Cloudinary images."
+---
+
+The `/api/carousel` route group manages the hero image carousel displayed on the Eco-It home page. The public `GET /` endpoint requires no authentication and is intended to be called by the frontend on page load. All write operations (create, update, delete, reorder) are protected by JWT authentication and require the `admin` role. Slide images are stored in Cloudinary; when a slide is deleted, its Cloudinary asset is automatically removed using the stored `publicId`.
+
+<Info>
+  Slides are ordered by the `order` field (ascending). Use the **reorder** endpoint to update display order without modifying individual slides.
+</Info>
+
+---
+
+## CarouselSlide Model
+
+The following fields make up a `CarouselSlide` document. Understanding the model is important for both creating new slides and interpreting responses.
+
+| Field       | Type    | Required | Default | Description                                                  |
+| ----------- | ------- | -------- | ------- | ------------------------------------------------------------ |
+| `tag`       | string  | No       | —       | Small label shown above the title, e.g. `"Nuevo"` or `"Destacado"`. |
+| `title`     | string  | **Yes**  | —       | Main heading text of the slide.                             |
+| `subtitle`  | string  | No       | —       | Supporting sub-heading or body copy.                        |
+| `src`       | string  | **Yes**  | —       | Cloudinary secure URL of the slide image.                   |
+| `publicId`  | string  | **Yes**  | —       | Cloudinary public ID used to delete the asset when the slide is removed. |
+| `alt`       | string  | No       | `title` | Accessible alt text for the image. Defaults to the slide `title`. |
+| `active`    | boolean | No       | `true`  | Controls whether the slide appears in the public feed.      |
+| `order`     | number  | No       | `0`     | Sort position (ascending). Managed automatically on create; updated via the reorder endpoint. |
+| `width`     | number  | No       | `null`  | Optional intrinsic image width hint in pixels.              |
+| `height`    | number  | No       | `null`  | Optional intrinsic image height hint in pixels.             |
+| `createdAt` | string  | —        | auto    | ISO 8601 timestamp set by Mongoose `timestamps`.            |
+| `updatedAt` | string  | —        | auto    | ISO 8601 timestamp updated on every save.                   |
+
+---
+
+## Public Endpoint
+
+### GET /api/carousel
+
+Returns all slides where `active: true`, sorted by `order` ascending. This endpoint is **unauthenticated** and is the only carousel route intended for end-user consumption.
+
+**Auth:** None (public)
+
+```http
+GET /api/carousel
+```
+
+**Example response**
+
+```json
+{
+  "success": true,
+  "slides": [
+    {
+      "_id": "665f1a2b3c4d5e6f7a8b9c0d",
+      "tag": "Bienvenida",
+      "title": "Recicla con Eco-It",
+      "subtitle": "Encuentra los puntos de reciclaje más cercanos a ti",
+      "src": "https://res.cloudinary.com/demo/image/upload/v1/ecoit_carousel/slide1.jpg",
+      "publicId": "ecoit_carousel/slide1",
+      "alt": "Recicla con Eco-It",
+      "active": true,
+      "order": 0,
+      "width": 1920,
+      "height": 1080,
+      "createdAt": "2024-06-04T10:00:00.000Z",
+      "updatedAt": "2024-06-04T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="slides" type="array">
+  Array of active `CarouselSlide` documents sorted by `order` ascending. See the [CarouselSlide Model](#carouselslide-model) table for field descriptions.
+</ResponseField>
+
+---
+
+## Admin Endpoints
+
+All endpoints below require a valid admin JWT in the `Authorization` header.
+
+```
+Authorization: Bearer <token>
+```
+
+### GET /api/carousel/admin
+
+Returns **all** slides regardless of their `active` status, sorted by `order` ascending. Used by the admin dashboard to display and manage the full slide library.
+
+**Auth:** Admin
+
+```http
+GET /api/carousel/admin
+Authorization: Bearer <token>
+```
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="slides" type="array">
+  Array of all `CarouselSlide` documents (including inactive), sorted by `order` ascending.
+</ResponseField>
+
+---
+
+### POST /api/carousel
+
+Creates a new carousel slide. The new slide is automatically assigned an `order` value equal to the current total count of slides, placing it at the end of the carousel. An audit log entry of type `"slide"` is created automatically.
+
+**Auth:** Admin
+
+```http
+POST /api/carousel
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+<ParamField body="title" type="string" required>
+  Main heading of the slide. Also used as the `alt` fallback if `alt` is not provided.
+</ParamField>
+
+<ParamField body="src" type="string" required>
+  Cloudinary secure URL of the slide image. Upload the image to Cloudinary separately and pass the resulting `secure_url` here.
+</ParamField>
+
+<ParamField body="publicId" type="string" required>
+  Cloudinary public ID of the image (e.g. `"ecoit_carousel/my_slide"`). This is used to delete the Cloudinary asset when the slide is deleted.
+</ParamField>
+
+<ParamField body="tag" type="string">
+  Optional label displayed above the title, e.g. `"Nuevo"`, `"Destacado"`.
+</ParamField>
+
+<ParamField body="subtitle" type="string">
+  Optional supporting text shown below the title.
+</ParamField>
+
+<ParamField body="alt" type="string">
+  Accessible alt text for the image. Defaults to the value of `title` if omitted.
+</ParamField>
+
+<ParamField body="active" type="boolean" default="true">
+  Set to `false` to create the slide in a hidden/draft state.
+</ParamField>
+
+<ParamField body="width" type="number">
+  Optional intrinsic image width in pixels.
+</ParamField>
+
+<ParamField body="height" type="number">
+  Optional intrinsic image height in pixels.
+</ParamField>
+
+**Response — HTTP 201**
+
+<ResponseField name="success" type="boolean">
+  `true` on successful creation.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Slide creado correctamente"`.
+</ResponseField>
+
+<ResponseField name="slide" type="object">
+  The newly created `CarouselSlide` document, including the auto-assigned `order` value.
+</ResponseField>
+
+**Example request**
+
+```json
+{
+  "tag": "Novedades",
+  "title": "Nueva ruta de reciclaje en Usaquén",
+  "subtitle": "Descubre el nuevo punto de recolección en tu barrio",
+  "src": "https://res.cloudinary.com/demo/image/upload/v1/ecoit_carousel/usaquen.jpg",
+  "publicId": "ecoit_carousel/usaquen",
+  "alt": "Ruta de reciclaje Usaquén",
+  "active": true,
+  "width": 1920,
+  "height": 1080
+}
+```
+
+<Note>
+  Upload images to Cloudinary **before** calling this endpoint. The API does not accept raw file uploads — provide the `src` URL and `publicId` returned by Cloudinary after a direct or server-side upload.
+</Note>
+
+---
+
+### PUT /api/carousel/:id
+
+Replaces the fields of an existing slide with the values provided in the request body. Partial updates are supported — only the fields present in the body are overwritten (standard `findByIdAndUpdate` behaviour).
+
+**Auth:** Admin
+
+```http
+PUT /api/carousel/:id
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+| Path parameter | Type   | Description                  |
+| -------------- | ------ | ---------------------------- |
+| `id`           | string | MongoDB ObjectId of the slide to update. |
+
+<ParamField body="tag" type="string">Updated tag label.</ParamField>
+<ParamField body="title" type="string">Updated heading text.</ParamField>
+<ParamField body="subtitle" type="string">Updated subtitle text.</ParamField>
+<ParamField body="src" type="string">Updated Cloudinary image URL.</ParamField>
+<ParamField body="publicId" type="string">Updated Cloudinary public ID (if the image was replaced).</ParamField>
+<ParamField body="alt" type="string">Updated alt text.</ParamField>
+<ParamField body="active" type="boolean">Updated visibility flag.</ParamField>
+<ParamField body="order" type="number">Updated sort position. Prefer using the `/reorder` endpoint for bulk reordering.</ParamField>
+<ParamField body="width" type="number">Updated intrinsic width hint.</ParamField>
+<ParamField body="height" type="number">Updated intrinsic height hint.</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Slide actualizado correctamente"`.
+</ResponseField>
+
+<ResponseField name="slide" type="object">
+  The updated `CarouselSlide` document (returned with `{ new: true }`).
+</ResponseField>
+
+---
+
+### DELETE /api/carousel/:id
+
+Deletes a carousel slide from the database. If the slide has a `publicId`, the corresponding Cloudinary asset is also deleted automatically.
+
+**Auth:** Admin
+
+```http
+DELETE /api/carousel/:id
+Authorization: Bearer <token>
+```
+
+| Path parameter | Type   | Description                  |
+| -------------- | ------ | ---------------------------- |
+| `id`           | string | MongoDB ObjectId of the slide to delete. |
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Slide eliminado correctamente"`.
+</ResponseField>
+
+<Warning>
+  Deleting a slide also removes its image from Cloudinary (if `publicId` is set). This frees storage but is irreversible — the image will need to be re-uploaded if you want to restore the slide.
+</Warning>
+
+---
+
+### PATCH /api/carousel/reorder
+
+Reorders all carousel slides in a single batch operation. The request body should contain an array of slide MongoDB ObjectIds in the desired display order. Each slide is assigned an `order` value equal to its index position in the array (0-based), using a MongoDB `bulkWrite` for efficiency.
+
+**Auth:** Admin
+
+```http
+PATCH /api/carousel/reorder
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+<ParamField body="slides" type="string[]" required>
+  An ordered array of MongoDB ObjectId strings representing all slides in the desired display sequence. The first ID in the array will have `order: 0`, the second `order: 1`, and so on.
+</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Slides reordenados correctamente"`.
+</ResponseField>
+
+**Example request**
+
+```json
+{
+  "slides": [
+    "665f1a2b3c4d5e6f7a8b9c0d",
+    "665f1a2b3c4d5e6f7a8b9c0e",
+    "665f1a2b3c4d5e6f7a8b9c0f"
+  ]
+}
+```
+
+<Tip>
+  Always include **all** slide IDs in the `slides` array, not just the ones that moved. Any slide whose ID is omitted will not have its `order` updated and may appear in an unexpected position on the public carousel.
+</Tip>

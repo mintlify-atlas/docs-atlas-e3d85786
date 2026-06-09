@@ -1,0 +1,246 @@
+---
+title: "Authenticating Requests to the Eco-It API"
+sidebarTitle: "Authentication"
+description: "All protected Eco-It API endpoints require a JWT Bearer token in the Authorization header. Learn how to obtain and send tokens."
+---
+
+Eco-It uses **JSON Web Tokens (JWT)** for stateless authentication. When a user logs in successfully, the server signs and returns a token that must be attached to every subsequent request that accesses a protected resource. There are no sessions stored on the server for REST API calls — the token itself carries all necessary identity and role information.
+
+## How Authentication Works
+
+The server signs tokens with the `JWT_SECRET` environment variable using the default HS256 algorithm. Every token has a **12-hour expiry**. Once a token expires the client must obtain a new one by logging in again — there is no refresh token endpoint.
+
+<Info>
+Tokens are signed server-side and cannot be tampered with. Any modification to the token payload invalidates the signature, causing the `verificarToken` middleware to reject the request with a `401` error.
+</Info>
+
+## JWT Payload
+
+After successful login, the decoded token payload contains the following claims:
+
+<ResponseField name="id" type="string" required>
+  The MongoDB `_id` of the authenticated user. Used by middleware to look up the full, up-to-date user record from the database on every request.
+</ResponseField>
+
+<ResponseField name="rol" type="string" required>
+  The user's role. One of `user`, `admin`, or `superadmin`. Controls access to role-restricted endpoints.
+</ResponseField>
+
+<ResponseField name="perfilCompleto" type="boolean" required>
+  Indicates whether the user has completed their profile setup. Some frontend flows gate certain actions on this flag.
+</ResponseField>
+
+## Obtaining a Token
+
+There are two ways to obtain a JWT.
+
+<Steps>
+  <Step title="Email and password login">
+    Send a `POST` request to `/api/auth/login` with the user's credentials. On success the response includes a `token` field.
+
+    ```bash cURL
+    curl -X POST http://localhost:3000/api/auth/login \
+      -H "Content-Type: application/json" \
+      -d '{"email": "usuario@ejemplo.com", "password": "miContraseña123"}'
+    ```
+
+    ```json Successful response
+    {
+      "success": true,
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "usuario": {
+        "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "email": "usuario@ejemplo.com",
+        "rol": "user",
+        "perfilCompleto": true
+      }
+    }
+    ```
+
+    <ParamField body="email" type="string" required>
+      The user's registered email address.
+    </ParamField>
+
+    <ParamField body="password" type="string" required>
+      The user's account password.
+    </ParamField>
+  </Step>
+
+  <Step title="Google OAuth">
+    Redirect the user to the Google OAuth callback URL handled by Passport.js. After Google authenticates the user and redirects back, the server issues a JWT in the same way as email/password login. The OAuth flow is initiated via `/api/auth/google` and completes at the configured callback route.
+  </Step>
+</Steps>
+
+<Warning>
+The `/api/auth` route group is protected by a **stricter rate limiter**: a maximum of **15 requests per IP every 15 minutes**. Repeated failed login attempts will lock out the IP until the window resets. See [Rate Limiting](/api/overview#rate-limiting) for details.
+</Warning>
+
+## Sending the Token
+
+Once you have a token, include it in the `Authorization` header of every request to a protected endpoint using the **Bearer** scheme:
+
+```
+Authorization: Bearer <your_token_here>
+```
+
+```bash cURL example — authenticated request
+curl -X GET http://localhost:3000/api/user/perfil \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+Requests to protected endpoints that are missing the header, or that carry an expired or malformed token, receive a `401` response:
+
+```json 401 – Token required
+{
+  "message": "Token requerido"
+}
+```
+
+```json 401 – Token expired
+{
+  "message": "Token expirado, inicia sesion nuevamente"
+}
+```
+
+```json 401 – Token invalid
+{
+  "message": "Token invalido"
+}
+```
+
+## How `verificarToken` Works
+
+Every protected route applies the `verificarToken` middleware before its handler runs. The middleware performs the following steps in order:
+
+<Steps>
+  <Step title="Extract the token">
+    Reads the `Authorization` request header and extracts the token from `Bearer <token>`. If the header is absent or does not start with `Bearer`, the middleware immediately returns `401 { message: "Token requerido" }`.
+  </Step>
+  <Step title="Verify the signature">
+    Calls `jwt.verify(token, process.env.JWT_SECRET)` to validate the signature and check expiry. An expired token returns `401`; a tampered token returns `401` with `"Token invalido"`.
+  </Step>
+  <Step title="Fetch the live user record">
+    Uses the `id` from the decoded payload to query MongoDB for the current user document (`password` field excluded). This ensures that any changes made to the user's account since the token was issued — such as role updates or bans — are reflected immediately without waiting for the token to expire.
+  </Step>
+  <Step title="Check ban status">
+    If the user's `status` is `'banned'` **and** the current time is before `banHasta`, the middleware returns `403` with the ban details. If the ban period has already passed, it is automatically lifted and the request proceeds normally.
+  </Step>
+  <Step title="Attach user to request">
+    The full user document is attached to `req.usuario`, making it available to all downstream route handlers and middleware.
+  </Step>
+</Steps>
+
+## Role-Based Access Control
+
+After `verificarToken` populates `req.usuario`, additional role-guard middleware can be chained to restrict endpoints by role.
+
+| Middleware | Allowed roles | Rejection response |
+|---|---|---|
+| `soloAdmin` | `admin`, `superadmin` | `403 { message: "Acesso denegado: se requiere rol admin o superadmin" }` |
+| `soloSuperadmin` | `superadmin` only | `403 { message: "Acceso denegado: se requiere rol superadmin" }` |
+| `soloUser` | `user` only | `403 { message: "Acesso denegado: se requiere rol user" }` |
+
+A typical protected admin route is guarded by chaining all three middleware functions:
+
+```js Express route example
+router.get('/admin/usuarios', verificarToken, soloAdmin, obtenerUsuarios);
+```
+
+## Ban Handling
+
+If a user account has been banned by an administrator, the `verificarToken` middleware returns a `403` response with structured ban metadata so the client can display an informative message:
+
+```json 403 – Account banned
+{
+  "error": "Usuario baneado",
+  "banned": true,
+  "banReason": "Violación de términos de servicio",
+  "banHasta": "2025-08-01T00:00:00.000Z"
+}
+```
+
+<ResponseField name="banned" type="boolean">
+  Always `true` when this error is returned. Used by the frontend to distinguish a ban from other `403` errors.
+</ResponseField>
+
+<ResponseField name="banReason" type="string">
+  Human-readable reason provided by the administrator who issued the ban.
+</ResponseField>
+
+<ResponseField name="banHasta" type="string (ISO 8601)">
+  The UTC datetime at which the ban expires. After this point, the next authenticated request will automatically lift the ban and allow normal access.
+</ResponseField>
+
+## Token Refresh
+
+<Warning>
+There is **no refresh token endpoint** in the Eco-It API. Tokens have a fixed 12-hour expiry. When a token expires, users must authenticate again via `POST /api/auth/login` or the Google OAuth flow to obtain a new token.
+</Warning>
+
+## Frontend Integration
+
+The Eco-It frontend uses a `fetchAPI` helper defined in `frontend/src/services/api.js` that automatically reads the token from `localStorage` and injects it into every outgoing request:
+
+```js frontend/src/services/api.js
+const BASE_URL = import.meta.env.VITE_BACKEND_URL || '/api';
+
+export const AUTH_EXPIRED_EVENT = 'auth-expired';
+
+export const fetchAPI = async (endpoint, options = {}) => {
+  const fetchOptions = {
+    method: options.method || 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  };
+
+  // Attach token from localStorage if present
+  const token = localStorage.getItem('token');
+  if (token) {
+    fetchOptions.headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  if (options.body) {
+    fetchOptions.body = options.body;
+  }
+
+  const response = await fetch(`${BASE_URL}${endpoint}`, fetchOptions);
+  const data = await response.json();
+
+  if (!response.ok) {
+    // Dispatch DOM event on 401 so the app can log the user out automatically
+    if (response.status === 401 && !options.skipAuthError) {
+      window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+    }
+    // Dispatch ban event on 403 with banned flag
+    if (response.status === 403 && data.banned) {
+      window.dispatchEvent(new CustomEvent('USER_BANNED', { detail: data }));
+    }
+
+    const error = new Error(data.message || data.mensaje || data.error || 'Error en la petición');
+    error.data = data;
+    error.status = response.status;
+    throw error;
+  }
+
+  return data;
+};
+```
+
+Usage from any component or service is straightforward — just call `fetchAPI` with the endpoint path relative to `/api`:
+
+```js Fetching the authenticated user's profile
+import { fetchAPI } from '../services/api';
+
+const perfil = await fetchAPI('/user/perfil');
+// → GET /api/user/perfil with Authorization header automatically set
+```
+
+<Note>
+When the API returns a `401` status code, `fetchAPI` dispatches an `auth-expired` DOM event on `window`. The application's top-level auth listener catches this event and triggers an automatic logout, clearing the stored token and redirecting the user to the login page — no manual handling required at the component level. Pass `{ skipAuthError: true }` in the options object to suppress this behaviour for endpoints where a `401` is an expected, non-critical response (e.g. silently checking authentication state on page load).
+</Note>
+
+<Warning>
+The `fetchAPI` helper stores the JWT in **`localStorage`**, which is accessible to any JavaScript running on the page. This makes it vulnerable to XSS attacks. A more secure alternative is to store tokens in `HttpOnly` cookies, which are invisible to JavaScript. The trade-off is that cookie-based storage requires additional server-side configuration (CSRF protection, `SameSite` policy) and is more complex to implement with cross-origin frontends. Eco-It currently uses `localStorage` for simplicity; if you extend this project for a higher-security context, consider migrating to `HttpOnly` cookies.
+</Warning>

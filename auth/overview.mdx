@@ -1,0 +1,121 @@
+---
+title: "Authentication in Eco-It: JWT and OAuth"
+sidebarTitle: "Overview"
+description: "Eco-It supports local email/password auth with email verification and Google OAuth 2.0, both issuing JWT tokens stored in localStorage."
+---
+
+Eco-It provides two first-class authentication strategies: a local email-and-password flow backed by a 6-digit email verification step, and a federated Google OAuth 2.0 login powered by Passport.js. Both strategies converge on the same output — a signed JSON Web Token that the frontend stores in `localStorage` and attaches to every subsequent API request. This page gives a concise overview of the shared concepts; follow the links at the bottom to dive into each flow.
+
+## JSON Web Tokens
+
+Every successful authentication event — whether through the local flow or Google OAuth — produces a JWT signed with the `JWT_SECRET` environment variable and valid for **12 hours**. The token payload always carries three claims.
+
+| Claim | Type | Description |
+|---|---|---|
+| `id` | `ObjectId` | The MongoDB `_id` of the authenticated user. |
+| `rol` | `string` | The user's role: `user`, `admin`, or `superadmin`. |
+| `perfilCompleto` | `boolean` | Whether the user has completed their profile. |
+
+<Note>
+  Registration via the local email-verification flow issues a **7-day** token to keep new users logged in after confirming their email. All other login events use the standard **12-hour** expiry.
+</Note>
+
+## Token storage and transmission
+
+The frontend `AuthContext` stores the token in `localStorage` under the key `token`. The `fetchAPI` helper in `api.js` reads this value automatically and injects it into every outgoing request as an `Authorization` header.
+
+```bash
+Authorization: Bearer <token>
+```
+
+The server-side `verificarToken` middleware validates this header on every protected route. It decodes the JWT, loads the full user document from MongoDB, and attaches it to `req.usuario` for use in controllers downstream.
+
+## Role system
+
+Eco-It uses three roles, assigned at registration and stored on the `User` model.
+
+| Role | Description |
+|---|---|
+| `user` | Standard authenticated user. Default for all new registrations. |
+| `admin` | Platform administrator. Redirected to `/admin` on login. |
+| `superadmin` | Highest privilege level. Full platform control. |
+
+Role enforcement is handled by three composable middleware functions exported from `authMiddleware.js`: `soloAdmin` (allows `admin` and `superadmin`), `soloSuperadmin` (allows only `superadmin`), and `soloUser` (allows only `user`). These are applied on top of `verificarToken`.
+
+## User status
+
+Every user document carries a `status` field with one of three values.
+
+| Status | Description |
+|---|---|
+| `active` | Normal access. All protected resources are available. |
+| `inactive` | Account created but not fully active. |
+| `banned` | Account suspended. `verificarToken` returns `403` with `banned: true`, `banReason`, and `banHasta`. When the ban expiry date passes, the status is automatically lifted to `active` on the next request. |
+
+<Warning>
+  Banned users cannot access any route protected by `verificarToken`. The frontend `AuthContext` listens for the `USER_BANNED` custom event and immediately shows a suspension modal, forcing the user to acknowledge the ban and be logged out.
+</Warning>
+
+## Rate limiting
+
+All `/api/auth` routes are protected by `authLimiter`, a more restrictive rate-limit policy than the global limiter applied to the rest of the API.
+
+| Limiter | Window | Max requests |
+|---|---|---|
+| `globalLimiter` | 15 minutes | 300 per IP |
+| `authLimiter` | 15 minutes | **15 per IP** |
+
+Exceeding the auth limit returns a `429` response with the message: *"Demasiados intentos de acceso desde esta IP. Por favor, intenta de nuevo en 15 minutos."*
+
+<Tip>
+  During development, disable or raise `authLimiter` if you need to iterate quickly on registration and login UI without hitting `429` errors.
+</Tip>
+
+## Environment variables
+
+The authentication system depends on the following environment variables being set on the backend.
+
+<ParamField body="JWT_SECRET" type="string" required>
+  Secret key used to sign and verify all JWTs. Keep this value long, random, and never commit it to source control.
+</ParamField>
+
+<ParamField body="EMAIL_USER" type="string" required>
+  Gmail address used as the sender for verification and recovery emails (e.g. `noreply@eco-it.co`).
+</ParamField>
+
+<ParamField body="EMAIL_PASS" type="string" required>
+  Gmail app password (not the account password) for the `EMAIL_USER` account.
+</ParamField>
+
+<ParamField body="GOOGLE_CLIENT_ID" type="string">
+  OAuth 2.0 Client ID from the Google Cloud Console. Required only for Google OAuth.
+</ParamField>
+
+<ParamField body="GOOGLE_CLIENT_SECRET" type="string">
+  OAuth 2.0 Client Secret from the Google Cloud Console. Required only for Google OAuth.
+</ParamField>
+
+<ParamField body="FRONT_URL" type="string">
+  Base URL of the React frontend (e.g. `https://eco-it.co`). Used in Google OAuth redirects and email links.
+</ParamField>
+
+<ParamField body="BACK_URL" type="string">
+  Base URL of the backend API (e.g. `https://api.eco-it.co`). Used to build the Google OAuth callback URL.
+</ParamField>
+
+## Authentication flows at a glance
+
+<CardGroup cols={2}>
+  <Card title="Local Auth" icon="envelope" href="/auth/local">
+    Register with email and password, verify via a 6-digit code, and log in to receive a JWT. Includes profile completion for Google users.
+  </Card>
+  <Card title="Google OAuth" icon="google" href="/auth/google-oauth">
+    Sign in with a Google account using Passport.js. The callback issues a JWT and redirects to the frontend with the token in the URL.
+  </Card>
+  <Card title="Password Recovery" icon="lock-open" href="/auth/password-recovery">
+    Reset a forgotten password with a 3-step email verification flow: request code, verify code, set new password.
+  </Card>
+  <Card title="Auth Middleware" icon="shield-halved" href="/auth/overview#token-storage-and-transmission">
+    All protected routes require `Authorization: Bearer <token>`. Banned users are blocked at the middleware layer.
+  </Card>
+</CardGroup>

@@ -1,0 +1,674 @@
+---
+title: "Admin API Endpoints — /api/admin (Admin Role Required)"
+sidebarTitle: "Admin Endpoints"
+description: "Admin-only REST endpoints for user management, recycling map CRUD, notifications, and audit logs. Superadmin required for destructive operations."
+---
+
+The `/api/admin` route group powers the Eco-It back-office dashboard. Every endpoint in this group is protected by JWT authentication (`verificarToken`) and requires at minimum the `admin` role. Certain destructive operations — such as deleting notifications, purging audit logs, or changing a user's role — additionally require the `superadmin` role. All requests must include a valid `Authorization: Bearer <token>` header.
+
+<Warning>
+  Never expose admin tokens in client-side code or version-control repositories. Rotate credentials immediately if a token is compromised.
+</Warning>
+
+---
+
+## Users
+
+### GET /api/admin/usuarios
+
+Returns a paginated-ready list of every registered user, sorted newest-first. Passwords, reset tokens, and expiry dates are excluded from the response. Each user object is augmented with a live `isOnline` flag derived from the active Socket.IO connection map.
+
+**Auth:** Admin
+
+```http
+GET /api/admin/usuarios
+Authorization: Bearer <token>
+```
+
+<ResponseField name="success" type="boolean">
+  `true` on a successful fetch.
+</ResponseField>
+
+<ResponseField name="usuarios" type="array">
+  Array of user objects. Sensitive fields (`password`, `resetPasswordToken`, `resetPasswordExpires`) are stripped.
+
+  <Expandable title="User object fields">
+    <ResponseField name="_id" type="string">MongoDB ObjectId of the user.</ResponseField>
+    <ResponseField name="nombre" type="string">First name.</ResponseField>
+    <ResponseField name="apellido" type="string">Last name.</ResponseField>
+    <ResponseField name="email" type="string">Email address.</ResponseField>
+    <ResponseField name="rol" type="string">Role: `user`, `admin`, or `superadmin`.</ResponseField>
+    <ResponseField name="status" type="string">`active` or `banned`.</ResponseField>
+    <ResponseField name="banHasta" type="string | null">ISO date until which the user is banned, or `null`.</ResponseField>
+    <ResponseField name="banReason" type="string | null">Human-readable ban reason.</ResponseField>
+    <ResponseField name="puntos" type="number">Accumulated eco-points.</ResponseField>
+    <ResponseField name="isOnline" type="boolean">Whether the user has an active Socket.IO connection right now.</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 registration timestamp.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+### GET /api/admin/stats
+
+Returns aggregated KPI statistics for the admin dashboard, including total users, recycling points, AI chat queries, and rich chart data for the last 30 days and the current year.
+
+**Auth:** Admin
+
+```http
+GET /api/admin/stats
+Authorization: Bearer <token>
+```
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="totalUsuarios" type="number">
+  Total number of registered accounts.
+</ResponseField>
+
+<ResponseField name="usuariosOnline" type="number">
+  Number of users with an active Socket.IO session at query time.
+</ResponseField>
+
+<ResponseField name="nuevosHoy" type="number">
+  Accounts created since midnight today (Colombia/Bogotá timezone).
+</ResponseField>
+
+<ResponseField name="totalPuntos" type="number">
+  Sum of `puntos` across all user accounts.
+</ResponseField>
+
+<ResponseField name="totalConsultas" type="number">
+  Cumulative AI chat messages sent by users (images excluded).
+</ResponseField>
+
+<ResponseField name="consultasHoy" type="number">
+  Chat messages sent today.
+</ResponseField>
+
+<ResponseField name="chartData" type="object">
+  Nested chart-ready data arrays.
+
+  <Expandable title="chartData fields">
+    <ResponseField name="queries" type="array">Monthly query counts for the current year (12 entries, Jan–Dec).</ResponseField>
+    <ResponseField name="usersMonth" type="array">Daily new-user registrations over the last 30 days.</ResponseField>
+    <ResponseField name="queriesMonth" type="array">Daily chat query counts over the last 30 days.</ResponseField>
+    <ResponseField name="usersWeek" type="array">Last 7 days of user registrations (subset of `usersMonth`).</ResponseField>
+    <ResponseField name="queriesWeek" type="array">Last 7 days of chat queries (subset of `queriesMonth`).</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+### GET /api/admin/admin
+
+Returns the name, email, and role of the currently authenticated admin. Useful for rendering the dashboard header or validating the active session.
+
+**Auth:** Admin
+
+```http
+GET /api/admin/admin
+Authorization: Bearer <token>
+```
+
+<ResponseField name="message" type="string">
+  A welcome string: `"Bienvenido al panel de administrador"`.
+</ResponseField>
+
+<ResponseField name="admin" type="object">
+  <Expandable title="Admin object fields">
+    <ResponseField name="nombre" type="string">Admin's first name from the JWT payload.</ResponseField>
+    <ResponseField name="email" type="string">Admin's email.</ResponseField>
+    <ResponseField name="rol" type="string">`admin` or `superadmin`.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+### DELETE /api/admin/users/:id
+
+Permanently deletes a user account and all associated data. An audit log entry is automatically created. An admin cannot delete their own account.
+
+**Auth:** Admin
+
+```http
+DELETE /api/admin/users/:id
+Authorization: Bearer <token>
+```
+
+| Path parameter | Type   | Description              |
+| -------------- | ------ | ------------------------ |
+| `id`           | string | MongoDB ObjectId of the user to delete. |
+
+<ResponseField name="success" type="boolean">
+  `true` on successful deletion.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Usuario eliminado exitosamente"` or an error description.
+</ResponseField>
+
+<Warning>
+  This action is irreversible. The user's chat history, points, and profile data are permanently removed from the database.
+</Warning>
+
+---
+
+### PATCH /api/admin/users/:id/ban
+
+Bans a user for a specified number of days. Sets the user's `status` to `"banned"`, records `banHasta` (expiry date) and `banReason`, emits a real-time `user:banned` Socket.IO event to the affected user's active connections, and creates a Notification document visible to all admins.
+
+**Auth:** Admin
+
+```http
+PATCH /api/admin/users/:id/ban
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+| Path parameter | Type   | Description            |
+| -------------- | ------ | ---------------------- |
+| `id`           | string | MongoDB ObjectId of the target user. |
+
+<ParamField body="dias" type="number" default="7">
+  Duration of the ban in days.
+</ParamField>
+
+<ParamField body="motivo" type="string" default="Incumplimiento de las normas">
+  Human-readable reason for the ban, stored in `banReason` and the generated notification.
+</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  E.g. `"Usuario baneado por 7 días"`.
+</ResponseField>
+
+<ResponseField name="usuario" type="object">
+  The updated user document reflecting the new banned status.
+</ResponseField>
+
+<Note>
+  An admin cannot ban themselves. Attempting to do so returns HTTP 400. A real-time Socket.IO event (`user:banned`) is emitted to the target user's open sockets so they are immediately logged out on the client side.
+</Note>
+
+---
+
+### PATCH /api/admin/users/:id/unban
+
+Lifts an active ban by resetting the user's `status` to `"active"` and clearing `banHasta`. Emits a `user:unbanned` Socket.IO event to the affected user in real time and writes an audit log entry.
+
+**Auth:** Admin
+
+```http
+PATCH /api/admin/users/:id/unban
+Authorization: Bearer <token>
+```
+
+| Path parameter | Type   | Description            |
+| -------------- | ------ | ---------------------- |
+| `id`           | string | MongoDB ObjectId of the target user. |
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Usuario desbaneado exitosamente"`.
+</ResponseField>
+
+<ResponseField name="usuario" type="object">
+  The updated user document with `status: "active"` and `banHasta: null`.
+</ResponseField>
+
+---
+
+### PATCH /api/admin/users/:id/role
+
+Changes a user's role to either `"user"` or `"admin"`. If the target user is currently `"active"` and connected, their Socket.IO room membership is updated instantly (joined or removed from the `admins` room).
+
+**Auth:** Superadmin
+
+```http
+PATCH /api/admin/users/:id/role
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+| Path parameter | Type   | Description            |
+| -------------- | ------ | ---------------------- |
+| `id`           | string | MongoDB ObjectId of the target user. |
+
+<ParamField body="rol" type="string" required>
+  New role to assign. Must be either `"user"` or `"admin"`. The value `"superadmin"` is explicitly rejected.
+</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  Confirmation message including the new role, e.g. `"El rol del usuario ha sido cambiado a admin"`.
+</ResponseField>
+
+<ResponseField name="usuario" type="object">
+  The updated user document.
+</ResponseField>
+
+<Warning>
+  Only **superadmins** may call this endpoint. Assigning the `"superadmin"` role via the API is blocked by design — there can only be one superadmin, set directly in the database.
+</Warning>
+
+---
+
+## Notifications
+
+Notifications are system-generated events (e.g. ban events, content alerts) stored in MongoDB. They auto-expire after **7 days** via a TTL index. Each notification tracks which admin users have read it via the `readBy` array.
+
+### GET /api/admin/notifications
+
+Returns the 50 most recent notifications, sorted by date descending. Each notification is augmented with a per-requesting-admin `read` boolean.
+
+**Auth:** Admin
+
+```http
+GET /api/admin/notifications
+Authorization: Bearer <token>
+```
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="notifications" type="array">
+  Array of notification objects.
+
+  <Expandable title="Notification object fields">
+    <ResponseField name="id" type="string">Alias for `_id`.</ResponseField>
+    <ResponseField name="type" type="string">One of `"alerta_obscena"`, `"usuario_baneado"`, or `"alerta_lenguaje"`.</ResponseField>
+    <ResponseField name="email" type="string">Email of the user involved.</ResponseField>
+    <ResponseField name="nombre" type="string">Full name of the user involved.</ResponseField>
+    <ResponseField name="adminName" type="string">Name of the admin who triggered the event.</ResponseField>
+    <ResponseField name="dias" type="number">Ban duration in days (for `usuario_baneado` type).</ResponseField>
+    <ResponseField name="mensaje" type="string">Human-readable notification message.</ResponseField>
+    <ResponseField name="fecha" type="string">ISO 8601 timestamp when the notification was created.</ResponseField>
+    <ResponseField name="read" type="boolean">Whether the requesting admin has already read this notification.</ResponseField>
+    <ResponseField name="readBy" type="array">Array of admin ObjectIds who have read the notification.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+### PATCH /api/admin/notifications/mark-read
+
+Marks **all** notifications as read for the requesting admin by adding their user ID to the `readBy` array of every notification not yet read by them.
+
+**Auth:** Admin
+
+```http
+PATCH /api/admin/notifications/mark-read
+Authorization: Bearer <token>
+```
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Notificaciones marcadas como leídas"`.
+</ResponseField>
+
+---
+
+### PATCH /api/admin/notifications/:id/mark-read
+
+Marks a single notification as read for the requesting admin.
+
+**Auth:** Admin
+
+```http
+PATCH /api/admin/notifications/:id/mark-read
+Authorization: Bearer <token>
+```
+
+| Path parameter | Type   | Description                       |
+| -------------- | ------ | --------------------------------- |
+| `id`           | string | MongoDB ObjectId of the notification. |
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Notificación marcada como leída"`.
+</ResponseField>
+
+---
+
+### DELETE /api/admin/notifications/all
+
+Permanently deletes **all** notifications from the database.
+
+**Auth:** Superadmin
+
+```http
+DELETE /api/admin/notifications/all
+Authorization: Bearer <token>
+```
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Todas las notificaciones eliminadas de la base de datos"`.
+</ResponseField>
+
+<Warning>
+  This is a destructive superadmin-only operation. All notification history will be permanently erased and cannot be recovered.
+</Warning>
+
+---
+
+### DELETE /api/admin/notifications/:id
+
+Deletes a single notification by its ID.
+
+**Auth:** Superadmin
+
+```http
+DELETE /api/admin/notifications/:id
+Authorization: Bearer <token>
+```
+
+| Path parameter | Type   | Description                       |
+| -------------- | ------ | --------------------------------- |
+| `id`           | string | MongoDB ObjectId of the notification to delete. |
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Notificación eliminada de la base de datos"`.
+</ResponseField>
+
+---
+
+## Audit Logs
+
+Audit logs are immutable records of significant admin actions (bans, unbans, role changes, deletions, slide creations, etc.). They are written automatically by the `createAuditLog` utility and **auto-expire after 7 days** via a MongoDB TTL index.
+
+### GET /api/admin/audit
+
+Returns the 50 most recent audit log entries, sorted newest-first.
+
+**Auth:** Admin
+
+```http
+GET /api/admin/audit
+Authorization: Bearer <token>
+```
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="logs" type="array">
+  Array of audit log objects.
+
+  <Expandable title="AuditLog object fields">
+    <ResponseField name="_id" type="string">MongoDB ObjectId.</ResponseField>
+    <ResponseField name="type" type="string">Category of the action, e.g. `"ban"`, `"unban"`, `"delete"`, `"role_change"`, `"slide"`.</ResponseField>
+    <ResponseField name="action" type="string">Short label, e.g. `"Usuario Baneado"`, `"Cambio de Rol"`.</ResponseField>
+    <ResponseField name="details" type="string">Full description of what happened, including affected email and parameters.</ResponseField>
+    <ResponseField name="user" type="string">Name or email of the admin who performed the action. Defaults to `"Sistema"` for automated entries.</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 creation timestamp. Records expire 7 days after this date.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Note>
+  Audit logs are read-only by design for regular admins. Only superadmins can delete entries, and even then, the TTL index will automatically clean up records older than 7 days regardless.
+</Note>
+
+---
+
+### DELETE /api/admin/audit/:id
+
+Deletes a single audit log entry by its ID before its natural TTL expiry.
+
+**Auth:** Superadmin
+
+```http
+DELETE /api/admin/audit/:id
+Authorization: Bearer <token>
+```
+
+| Path parameter | Type   | Description                       |
+| -------------- | ------ | --------------------------------- |
+| `id`           | string | MongoDB ObjectId of the audit log entry. |
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Registro eliminado de la base de datos"`.
+</ResponseField>
+
+---
+
+### DELETE /api/admin/audit/all
+
+Wipes the entire audit log collection.
+
+**Auth:** Superadmin
+
+```http
+DELETE /api/admin/audit/all
+Authorization: Bearer <token>
+```
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Todos los registros eliminados de la base de datos"`.
+</ResponseField>
+
+<Warning>
+  Deleting all audit logs removes the complete administrative action history. This operation cannot be undone and should only be used during maintenance or compliance-driven data purges.
+</Warning>
+
+---
+
+## Map Points (Admin)
+
+These endpoints manage the recycling point markers displayed on the public Eco-It map. Mutations emit a real-time `map:updated` Socket.IO event to all connected clients so the map refreshes instantly without requiring a page reload. Images are uploaded to and hosted on Cloudinary under the `ecoit_map_points` folder.
+
+### GET /api/admin/map/points
+
+Returns all recycling points (both active and inactive, both user-visible and hidden), sorted newest-first. This is the admin-facing counterpart of the public map endpoint.
+
+**Auth:** Admin
+
+```http
+GET /api/admin/map/points
+Authorization: Bearer <token>
+```
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="puntos" type="array">
+  Full PuntoReciclaje documents including admin-only fields like `activo` and `visibleToUser`.
+
+  <Expandable title="PuntoReciclaje object fields">
+    <ResponseField name="_id" type="string">MongoDB ObjectId.</ResponseField>
+    <ResponseField name="nombre" type="string">Display name of the recycling point.</ResponseField>
+    <ResponseField name="tipo" type="string">Type: `"recycling"`, `"ecobottle"`, `"truck"`, `"container"`, or `"green_zone"`.</ResponseField>
+    <ResponseField name="lat" type="number">Latitude coordinate.</ResponseField>
+    <ResponseField name="lng" type="number">Longitude coordinate.</ResponseField>
+    <ResponseField name="descripcion" type="string">Optional description.</ResponseField>
+    <ResponseField name="imagen" type="string">Cloudinary-hosted image URL.</ResponseField>
+    <ResponseField name="activo" type="boolean">Whether the point is currently active.</ResponseField>
+    <ResponseField name="visibleToUser" type="boolean">Whether regular users can see this point on the public map.</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 creation timestamp.</ResponseField>
+    <ResponseField name="updatedAt" type="string">ISO 8601 last-updated timestamp.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+### POST /api/admin/map/points
+
+Creates a new recycling map point. If the `imagen` field contains a base64 data URI, it is uploaded to Cloudinary and the resulting secure URL is stored in its place.
+
+**Auth:** Admin
+
+```http
+POST /api/admin/map/points
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+<ParamField body="nombre" type="string" required>
+  Display name of the recycling point shown on the map and in listings.
+</ParamField>
+
+<ParamField body="tipo" type="string" required>
+  Category of the point. Must be one of: `"recycling"`, `"ecobottle"`, `"truck"`, `"container"`, `"green_zone"`. Defaults to `"recycling"`.
+</ParamField>
+
+<ParamField body="lat" type="number" required>
+  Latitude of the point in decimal degrees (e.g. `4.7110` for Bogotá).
+</ParamField>
+
+<ParamField body="lng" type="number" required>
+  Longitude of the point in decimal degrees (e.g. `-74.0721` for Bogotá).
+</ParamField>
+
+<ParamField body="descripcion" type="string">
+  Optional text description of the location or accepted materials.
+</ParamField>
+
+<ParamField body="imagen" type="string">
+  Base64-encoded data URI (e.g. `"data:image/png;base64,..."`) or an existing URL. If a data URI is provided, it is uploaded to Cloudinary and replaced with the resulting secure URL.
+</ParamField>
+
+<ParamField body="activo" type="boolean" default="true">
+  Whether the point is immediately active after creation.
+</ParamField>
+
+<ParamField body="visibleToUser" type="boolean" default="true">
+  Whether the point should appear on the public-facing user map.
+</ParamField>
+
+**Response — HTTP 201**
+
+<ResponseField name="success" type="boolean">
+  `true` on creation.
+</ResponseField>
+
+<ResponseField name="punto" type="object">
+  The newly created PuntoReciclaje document.
+</ResponseField>
+
+<Tip>
+  After a successful creation, the server automatically emits a `map:updated` Socket.IO event with the full list of active, user-visible points. Frontend map components should listen for this event to refresh markers without polling.
+</Tip>
+
+---
+
+### PATCH /api/admin/map/points/:id
+
+Updates any fields of an existing recycling point. Partial updates are supported — only provide the fields you wish to change. If `imagen` is a new base64 data URI, it is re-uploaded to Cloudinary.
+
+**Auth:** Admin
+
+```http
+PATCH /api/admin/map/points/:id
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+| Path parameter | Type   | Description                  |
+| -------------- | ------ | ---------------------------- |
+| `id`           | string | MongoDB ObjectId of the point to update. |
+
+<ParamField body="nombre" type="string">Updated display name.</ParamField>
+<ParamField body="tipo" type="string">Updated type. Same enum as POST.</ParamField>
+<ParamField body="lat" type="number">Updated latitude.</ParamField>
+<ParamField body="lng" type="number">Updated longitude.</ParamField>
+<ParamField body="descripcion" type="string">Updated description.</ParamField>
+<ParamField body="imagen" type="string">New base64 data URI or Cloudinary URL.</ParamField>
+<ParamField body="activo" type="boolean">Updated active state.</ParamField>
+<ParamField body="visibleToUser" type="boolean">Updated user-visibility flag.</ParamField>
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="punto" type="object">
+  The updated PuntoReciclaje document (returned with `{ new: true }`).
+</ResponseField>
+
+---
+
+### DELETE /api/admin/map/points/:id
+
+Permanently removes a recycling point from the database and triggers a live `map:updated` event for all connected clients.
+
+**Auth:** Admin
+
+```http
+DELETE /api/admin/map/points/:id
+Authorization: Bearer <token>
+```
+
+| Path parameter | Type   | Description                  |
+| -------------- | ------ | ---------------------------- |
+| `id`           | string | MongoDB ObjectId of the point to delete. |
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="mensaje" type="string">
+  `"Punto eliminado correctamente"`.
+</ResponseField>
+
+---
+
+### PATCH /api/admin/map/points/:id/toggle
+
+Flips the `activo` boolean of a recycling point (active → inactive or inactive → active) without requiring the full point object in the request body. Emits `map:updated` in real time.
+
+**Auth:** Admin
+
+```http
+PATCH /api/admin/map/points/:id/toggle
+Authorization: Bearer <token>
+```
+
+| Path parameter | Type   | Description                  |
+| -------------- | ------ | ---------------------------- |
+| `id`           | string | MongoDB ObjectId of the point to toggle. |
+
+<ResponseField name="success" type="boolean">
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="punto" type="object">
+  The updated PuntoReciclaje document with the new `activo` state reflected.
+</ResponseField>
+
+<Tip>
+  Use this endpoint instead of `PATCH /map/points/:id` when you only need to show or hide a point — it avoids sending the entire point payload and is therefore faster for bulk toggling operations.
+</Tip>

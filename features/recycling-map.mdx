@@ -1,0 +1,147 @@
+---
+title: "Interactive Recycling Map for Colombian Cities"
+sidebarTitle: "Recycling Map"
+description: "Eco-It's recycling map displays active collection points on an interactive Leaflet map, filterable by type, with route planning and favorites."
+---
+
+The Eco-It recycling map gives every visitor — logged in or not — an interactive view of active waste-collection and recycling points in their city. It is built with Leaflet.js, embedded in the React SPA, and renders custom SVG pin markers for each point type. Map data is served from a public REST endpoint so no authentication is required to browse the map, though route planning and favorites require a user account.
+
+## Point Types
+
+Every recycling point stored in the database belongs to exactly one of the following five categories, defined as an enum on the `PuntoReciclaje` Mongoose model:
+
+<CardGroup cols={3}>
+  <Card title="recycling" icon="recycle" color="#22c55e">
+    A standard recycling drop-off point. Renders with a **green** pin on the map.
+  </Card>
+  <Card title="ecobottle" icon="bottle-water" color="#84cc16">
+    An eco-bottle deposit station. Renders with a **lime** pin.
+  </Card>
+  <Card title="truck" icon="truck" color="#14b8a6">
+    A scheduled collection truck stop. Renders with a **teal** pin.
+  </Card>
+  <Card title="container" icon="trash" color="#10b981">
+    A large waste container. Renders with an **emerald** pin.
+  </Card>
+  <Card title="green_zone" icon="leaf" color="#4ade80">
+    A designated green zone for organic or composting drop-off. Renders with a **light-green** pin.
+  </Card>
+</CardGroup>
+
+## Data Model
+
+The `PuntoReciclaje` schema (defined in `backend/models/puntoReciclaje.js`) stores the following fields for each point:
+
+<ParamField body="nombre" type="string" required>
+  Display name of the recycling point shown in the map popup and result list.
+</ParamField>
+
+<ParamField body="tipo" type="string" required>
+  One of `recycling`, `ecobottle`, `truck`, `container`, or `green_zone`. Determines the marker icon and color.
+</ParamField>
+
+<ParamField body="lat" type="number" required>
+  Latitude coordinate (WGS 84 decimal degrees).
+</ParamField>
+
+<ParamField body="lng" type="number" required>
+  Longitude coordinate (WGS 84 decimal degrees).
+</ParamField>
+
+<ParamField body="descripcion" type="string">
+  Optional description shown inside the Leaflet popup when a user clicks the pin.
+</ParamField>
+
+<ParamField body="imagen" type="string">
+  Optional Cloudinary URL of a photo of the point. Displayed as a thumbnail inside the popup.
+</ParamField>
+
+<ParamField body="activo" type="boolean">
+  When `false`, the point is hidden from the public map and excluded from the public API response. Defaults to `true`.
+</ParamField>
+
+<ParamField body="visibleToUser" type="boolean">
+  Secondary visibility flag. Both `activo` and `visibleToUser` must be `true` for a point to appear on the public map. Defaults to `true`.
+</ParamField>
+
+## Public API
+
+### `GET /api/map/points`
+
+Returns all recycling points where `activo: true` **and** `visibleToUser: true`, sorted by creation date descending. No authentication required.
+
+```http
+GET /api/map/points
+```
+
+**Example response:**
+
+```json
+{
+  "success": true,
+  "puntos": [
+    {
+      "id": "664f1a2b3c4d5e6f7a8b9c0d",
+      "nombre": "Punto Verde Centro",
+      "tipo": "recycling",
+      "lat": 2.1973,
+      "lng": -75.6310,
+      "descripcion": "Abierto lunes a sábado de 7 a.m. a 5 p.m.",
+      "imagen": "https://res.cloudinary.com/ecoit/image/upload/v1/ecoit_map_points/punto_verde_centro.jpg"
+    },
+    {
+      "id": "664f1a2b3c4d5e6f7a8b9c0e",
+      "nombre": "Ecobot Parque Caldas",
+      "tipo": "ecobottle",
+      "lat": 2.2015,
+      "lng": -75.6287,
+      "descripcion": "Deposita botellas PET limpias y secas.",
+      "imagen": ""
+    }
+  ]
+}
+```
+
+<ResponseField name="success" type="boolean">
+  `true` when the query succeeds.
+</ResponseField>
+
+<ResponseField name="puntos" type="array">
+  Array of active, user-visible recycling point objects. Each object contains `id`, `nombre`, `tipo`, `lat`, `lng`, `descripcion`, and `imagen`.
+</ResponseField>
+
+## Admin CRUD API
+
+Administrators manage recycling points through a set of protected endpoints under `/api/admin/map/points`. All admin endpoints require a valid JWT with an `admin` or `superadmin` role.
+
+<CardGroup cols={2}>
+  <Card title="GET /api/admin/map/points" icon="list">
+    Returns **all** points regardless of `activo` or `visibleToUser` status. Used by the admin map management panel.
+  </Card>
+  <Card title="POST /api/admin/map/points" icon="plus">
+    Creates a new recycling point. Accepts a base64 image string which is automatically uploaded to Cloudinary and stored as a secure URL.
+  </Card>
+  <Card title="PUT /api/admin/map/points/:id" icon="pen">
+    Updates an existing point. If the `imagen` field is a new `data:image/...` base64 string, it is re-uploaded to Cloudinary.
+  </Card>
+  <Card title="DELETE /api/admin/map/points/:id" icon="trash">
+    Permanently deletes a point from the database.
+  </Card>
+  <Card title="PATCH /api/admin/map/points/:id/toggle" icon="toggle-on">
+    Toggles the `activo` flag between `true` and `false` without deleting the point.
+  </Card>
+</CardGroup>
+
+Every write operation (create, update, delete, toggle) immediately emits a `map:updated` Socket.io event to **all** connected clients, broadcasting the updated list of active visible points so the map refreshes in real time without a page reload.
+
+## Frontend Map Component
+
+The `MapView` component (`frontend/src/components/Maps/MapView.jsx`) initializes a Leaflet map centered on the default coordinates `[2.195, -75.627]` at zoom level 14, constrained within bounding box `[2.140, -75.690]` → `[2.240, -75.560]` so users cannot pan outside the service area. Zoom controls are positioned at the bottom-right.
+
+Each point is rendered with a custom `L.divIcon` that combines a rotated teardrop shape, a type-specific SVG icon, and a CSS ripple animation. Clicking a marker fires an `onMarkerClick` callback with the point's `id`, `name`, `type`, coordinates, and description, which drives the result list sidebar.
+
+The component also accepts a `selectedPlace` prop. When it changes, the map flies to that location at zoom 18 with a smooth animation. Selecting **"Mi ubicación"** places a pulsing blue dot representing the user's current GPS position.
+
+<Tip>
+  To add a new recycling point to the map, navigate to the **Admin Panel → Map Management** section. Fill in the point name, type, GPS coordinates, and an optional photo. The new pin will appear on the live map for all users instantly via the `map:updated` Socket.io event — no deployment required. See the [Map Management](/admin/map-management) guide for step-by-step instructions.
+</Tip>

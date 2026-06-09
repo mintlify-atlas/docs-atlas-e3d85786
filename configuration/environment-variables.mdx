@@ -1,0 +1,120 @@
+---
+title: "Environment Variables Reference for Eco-It"
+sidebarTitle: "Environment Variables"
+description: "All backend and frontend environment variables for Eco-It: MongoDB, JWT, Google OAuth, Cloudinary, OpenRouter, and CORS configuration."
+---
+
+Eco-It splits its configuration across two environments: the **backend** (Node.js/Express) reads variables through [dotenv](https://github.com/motdotla/dotenv), which loads a `.env` file located in the `backend/` directory at startup. The **frontend** (React + Vite) uses Vite's built-in environment variable system — only variables prefixed with `VITE_` are exposed to browser code. Understanding which variables belong to which layer, and why each one is required, is essential before running Eco-It locally or deploying it to production.
+
+---
+
+## Backend environment variables
+
+These variables are loaded by `dotenv` in `backend/index.js` before any other module is imported. All secrets must be kept in `backend/.env` and never committed to version control.
+
+<ParamField path="MONGODB_URI" type="string" required>
+  MongoDB connection string. Use a [MongoDB Atlas](https://www.mongodb.com/atlas) connection string for production (e.g. `mongodb+srv://user:pass@cluster0.mongodb.net/ecoit?retryWrites=true&w=majority`) or a local URI such as `mongodb://localhost:27017/ecoit` for development.
+</ParamField>
+
+<ParamField path="JWT_SECRET" type="string" required>
+  Secret used to sign and verify JSON Web Tokens. It is also reused as the `express-session` secret. Must be a long, random, unpredictable string — see the tip below for a quick generation command.
+</ParamField>
+
+<ParamField path="PORT" type="number" default="3000">
+  HTTP port the Express server listens on. Railway injects this automatically at runtime; you only need to set it explicitly if self-hosting or overriding the default.
+</ParamField>
+
+<ParamField path="GOOGLE_CLIENT_ID" type="string" required>
+  OAuth 2.0 client ID from the [Google Cloud Console](https://console.cloud.google.com/). Required to enable Google Sign-In via Passport's `passport-google-oauth20` strategy.
+</ParamField>
+
+<ParamField path="GOOGLE_CLIENT_SECRET" type="string" required>
+  OAuth 2.0 client secret from the Google Cloud Console. Pair it with `GOOGLE_CLIENT_ID` — both must match the same credential object.
+</ParamField>
+
+<ParamField path="FRONT_URL" type="string" required>
+  The base URL of the deployed frontend (e.g. `https://eco-it.netlify.app`). The backend uses this value to build the Google OAuth callback redirect URI and to populate the CORS `origin` allowlist. In development, set it to `http://localhost:5173`.
+</ParamField>
+
+<ParamField path="CLOUDINARY_CLOUD_NAME" type="string" required>
+  Your Cloudinary cloud name (visible in the Cloudinary dashboard). Used by `backend/utils/cloudinary.js` to initialize the Cloudinary SDK for image uploads and transformations.
+</ParamField>
+
+<ParamField path="CLOUDINARY_API_KEY" type="string" required>
+  Cloudinary API key. Found under **Settings → Access Keys** in the Cloudinary dashboard.
+</ParamField>
+
+<ParamField path="CLOUDINARY_API_SECRET" type="string" required>
+  Cloudinary API secret. Treat this like a password — it allows signed upload and management operations on your Cloudinary account.
+</ParamField>
+
+<ParamField path="OPENROUTER_API_KEY" type="string" required>
+  API key for [OpenRouter](https://openrouter.ai/), used by the `/api/ai` routes to power EcoBot, Eco-It's environmental AI assistant. Generate a key from the OpenRouter dashboard.
+</ParamField>
+
+<ParamField path="NODE_ENV" type="string" default="development">
+  Runtime environment flag. Accepted values are `development` and `production`. When set to `development`, the global error handler returns the full error object in the response body, which is useful for debugging but must never be enabled in production.
+</ParamField>
+
+---
+
+## Frontend environment variables
+
+Vite only exposes variables whose names start with `VITE_` to the client bundle. Place these in `frontend/.env` (development) or `frontend/.env.production` (production build).
+
+<ParamField path="VITE_BACKEND_URL" type="string">
+  Backend API base URL, **including the `/api` path segment** (e.g. `https://backend-production-1e6e.up.railway.app/api`). In local development you can leave this variable **unset** — Vite's dev server proxy automatically forwards all `/api/*` requests to `http://localhost:3000`, as configured in `frontend/vite.config.js`. In production builds, this must point to your live Railway deployment.
+</ParamField>
+
+<ParamField path="VITE_SOCKET_URL" type="string">
+  WebSocket server base URL **without** the `/api` path (e.g. `https://backend-production-1e6e.up.railway.app`). The Socket.IO client connects to this URL for real-time features such as online user presence and admin notifications. In development, leave this unset — the Vite proxy handles WebSocket upgrades automatically.
+</ParamField>
+
+---
+
+## Sample backend `.env` file
+
+Place this file at `backend/.env`. Fill in every value before starting the server.
+
+```dotenv
+# ── Database ────────────────────────────────────────────────
+MONGODB_URI=mongodb+srv://<user>:<password>@cluster0.mongodb.net/ecoit?retryWrites=true&w=majority
+
+# ── Auth ────────────────────────────────────────────────────
+JWT_SECRET=replace_with_a_long_random_string_at_least_64_chars
+
+# ── Server ──────────────────────────────────────────────────
+PORT=3000
+NODE_ENV=development
+
+# ── Google OAuth ────────────────────────────────────────────
+GOOGLE_CLIENT_ID=123456789-abcdefghij.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxx
+
+# ── CORS / OAuth redirect base URL ──────────────────────────
+FRONT_URL=http://localhost:5173
+
+# ── Cloudinary ──────────────────────────────────────────────
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=123456789012345
+CLOUDINARY_API_SECRET=abcdefghijklmnopqrstuvwxyz012345
+
+# ── OpenRouter (EcoBot) ─────────────────────────────────────
+OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+---
+
+<Warning>
+  **Never commit `.env` files to version control.** Ensure `backend/.env` and `frontend/.env*.local` are listed in your root `.gitignore`. Exposing secrets in a public repository can lead to unauthorized database access, API abuse, and account takeover.
+</Warning>
+
+<Tip>
+  Generate a cryptographically strong `JWT_SECRET` in one command:
+
+  ```bash
+  openssl rand -hex 64
+  ```
+
+  This produces a 128-character hexadecimal string — well above the minimum length recommended for HMAC-SHA256 JWT signing.
+</Tip>

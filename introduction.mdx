@@ -1,0 +1,56 @@
+---
+title: "Eco-It: Environmental Sustainability Platform"
+sidebarTitle: "Introduction"
+description: "Eco-It is a full-stack SaaS for environmental education and recycling in Colombia, featuring AI, maps, gamification, and real-time admin tools."
+---
+
+Eco-It is a full-stack environmental sustainability platform built for Colombian citizens, educators, and municipal organizations who want to make recycling and ecological education accessible, engaging, and measurable. It combines an AI-powered assistant, an interactive recycling-point map, a browser-embedded eco-game, and a real-time admin panel into a single cohesive product — enabling both end-users and administrators to act on environmental data with confidence.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="EcoBot AI Assistant" icon="robot" href="/features/ecobot-ai">
+    Chat with EcoBot, powered by Google Gemini via OpenRouter, for instant answers on recycling best practices, material classification, and local environmental tips.
+  </Card>
+  <Card title="Interactive Recycling Map" icon="map-location-dot" href="/features/recycling-map">
+    Browse verified recycling collection points across Colombia on a Leaflet-powered map. Filter by material type and get directions directly from the browser.
+  </Card>
+  <Card title="Eco-Game" icon="gamepad" href="/features/eco-game">
+    Play an immersive Unity WebGL eco-game embedded in the platform that rewards responsible recycling behavior and teaches environmental concepts through gameplay.
+  </Card>
+  <Card title="Real-time Notifications" icon="bell" href="/features/notifications">
+    Receive instant in-app notifications delivered via Socket.io. Admins broadcast platform-wide announcements; users get personal alerts as they happen.
+  </Card>
+  <Card title="Authentication" icon="lock" href="/auth/overview">
+    Secure sign-in with local email/password (bcrypt hashed) or one-click Google OAuth 2.0. JWT tokens guard every protected route on both frontend and backend.
+  </Card>
+  <Card title="Admin Panel" icon="table-columns" href="/admin/overview">
+    A real-time admin dashboard with live user presence counters, audit logs, carousel management, recycling-point moderation, and pending-registration review.
+  </Card>
+</CardGroup>
+
+## Tech Stack
+
+Eco-It is built on a modern, production-tested stack chosen for performance, security, and developer ergonomics.
+
+| Layer | Technology |
+|---|---|
+| **Backend runtime** | Node.js 18+ with Express 5 |
+| **Database** | MongoDB via Mongoose 9 (MongoDB Atlas in production) |
+| **Frontend framework** | React 19 + Vite 8 |
+| **Styling** | Tailwind CSS 4, Framer Motion, Styled Components |
+| **Routing** | React Router DOM 7 |
+| **Real-time** | Socket.io 4 (server + client) |
+| **Authentication** | Passport.js — Local + Google OAuth 2.0, JWT (jsonwebtoken 9) |
+| **AI** | OpenRouter SDK (Google Gemini model) |
+| **Maps** | Leaflet 1.9 with OpenStreetMap tiles |
+| **Media** | Cloudinary 2 (image uploads and transformation) |
+| **Game** | Unity WebGL build embedded in React |
+| **Email** | Nodemailer (password recovery) |
+| **Security** | Helmet 8, express-rate-limit 8, express-mongo-sanitize, CORS allowlist |
+
+## Monorepo Structure
+
+<Note>
+  Eco-It is organized as a **pnpm workspace monorepo**. The root `package.json` declares two workspace packages — `backend` and `frontend` — and the root-level `concurrently` dev dependency wires them together so a single `pnpm dev` command starts both services at once. Always run `pnpm install` from the **repository root** to install all workspace dependencies in one step.
+</Note>

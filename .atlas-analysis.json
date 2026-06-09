@@ -1,0 +1,141 @@
+{
+  "projectType": "saas",
+  "projectName": "Eco-It",
+  "projectDescription": "Eco-It is a full-stack environmental sustainability platform that connects Colombian users to recycling points, provides an AI-powered recycling assistant (EcoBot), and includes an educational eco-game — all backed by an Express/MongoDB API with real-time Socket.io notifications.",
+  "theme": "palm",
+  "primaryColor": "#22C55E",
+  "lightColor": "#DCFCE7",
+  "darkColor": "#15803D",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/ecobot-ai",
+              "features/recycling-map",
+              "features/eco-game",
+              "features/notifications"
+            ]
+          },
+          {
+            "group": "Authentication",
+            "pages": [
+              "auth/overview",
+              "auth/local",
+              "auth/google-oauth",
+              "auth/password-recovery"
+            ]
+          },
+          {
+            "group": "Admin Panel",
+            "pages": [
+              "admin/overview",
+              "admin/user-management",
+              "admin/map-management",
+              "admin/audit-logs"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment-variables",
+              "configuration/deployment"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/auth-endpoints",
+              "api/user-endpoints",
+              "api/ai-endpoints",
+              "api/map-endpoints",
+              "api/admin-endpoints",
+              "api/carousel-endpoints",
+              "api/contact-endpoints"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "EcoBot AI chat assistant powered by Google Gemini / OpenRouter with image analysis for recycling identification",
+    "Interactive map of recycling points (puntos de reciclaje) using Leaflet and Google Maps API",
+    "Eco-game (WebGL Unity build) with leaderboard, achievements, and gamification points",
+    "JWT + Google OAuth 2.0 authentication with email verification flow",
+    "Real-time admin notifications and online user tracking via Socket.io",
+    "Role-based access control (user / admin / superadmin)",
+    "Automatic content moderation in AI chat with inappropriate-content detection and auto-ban",
+    "Audit log system for admin actions",
+    "Cloudinary-powered image uploads for carousel slides and recycling points",
+    "Monorepo with pnpm workspaces (Express 5 backend + Vite/React 19 frontend)"
+  ],
+  "publicApiSurface": [
+    "POST /api/auth/registro",
+    "POST /api/auth/enviar-codigo-registro",
+    "POST /api/auth/verificar-registro",
+    "POST /api/auth/login",
+    "POST /api/auth/logout",
+    "GET  /api/auth/google",
+    "GET  /api/auth/google/callback",
+    "PUT  /api/auth/completar-perfil",
+    "POST /api/auth/recuperar-password",
+    "POST /api/auth/recuperar-password/verificar",
+    "POST /api/auth/recuperar-password/restablecer",
+    "GET  /api/user/perfil",
+    "PUT  /api/user/perfil",
+    "PUT  /api/user/cambiar-password",
+    "DELETE /api/user/perfil",
+    "GET  /api/user/map-points",
+    "POST /api/ai/consultar (SSE streaming)",
+    "POST /api/ai/analizar-imagen",
+    "GET  /api/ai/chats",
+    "GET  /api/ai/chats/:id",
+    "DELETE /api/ai/chats/:id",
+    "DELETE /api/ai/chats",
+    "GET  /api/map/points",
+    "GET  /api/carousel",
+    "POST /api/contact",
+    "GET  /api/admin/usuarios",
+    "GET  /api/admin/stats",
+    "GET  /api/admin/notifications",
+    "GET  /api/admin/audit",
+    "PATCH /api/admin/users/:id/ban",
+    "PATCH /api/admin/users/:id/unban",
+    "PATCH /api/admin/users/:id/role",
+    "DELETE /api/admin/users/:id",
+    "GET  /api/admin/map/points",
+    "POST /api/admin/map/points",
+    "PATCH /api/admin/map/points/:id",
+    "DELETE /api/admin/map/points/:id",
+    "PATCH /api/admin/map/points/:id/toggle",
+    "GET  /api/carousel/admin",
+    "POST /api/carousel",
+    "PUT  /api/carousel/:id",
+    "DELETE /api/carousel/:id",
+    "PATCH /api/carousel/reorder"
+  ]
+}

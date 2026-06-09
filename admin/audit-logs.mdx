@@ -1,0 +1,223 @@
+---
+title: "Audit Logs: Tracking Admin Actions in Eco-It"
+sidebarTitle: "Audit Logs"
+description: "Eco-It records all significant admin actions in an audit log stored in MongoDB, queryable via the admin API with superadmin-only delete access."
+---
+
+Eco-It maintains a persistent audit log that records every consequential administrative action taken on the platform. This creates an accountability trail — any admin can review what was done, by whom, and when — and helps detect misuse of elevated privileges. Each log entry is created automatically by the `auditLogger` utility whenever a user is banned, unbanned, deleted, or has their role changed, and is delivered in real time to all connected admin panels via Socket.io.
+
+## Why Audit Logs Matter
+
+Without an audit trail, it would be impossible to answer questions such as: *Who banned this user and why? When was this account deleted? Which admin promoted this user to administrator?* The Eco-It audit log stores a concise but complete answer to each of these questions in a tamper-evident, time-limited MongoDB collection.
+
+<Note>
+  Audit log documents automatically expire after **7 days** (604 800 seconds). This is enforced by a MongoDB TTL index on the `createdAt` field. Logs older than seven days are deleted by MongoDB itself — not by the application. Superadmins can also delete individual logs or clear all logs before expiry using the dedicated API endpoints.
+</Note>
+
+## AuditLog Model Fields
+
+The `AuditLog` schema (`backend/models/AuditLog.js`) stores the following fields:
+
+<ResponseField name="type" type="string" required>
+  A machine-readable event type used for programmatic filtering. Current values emitted by the admin controller: `ban`, `unban`, `delete`, `role_change`.
+</ResponseField>
+
+<ResponseField name="action" type="string" required>
+  A short human-readable label for the action performed. Examples: `"Usuario Baneado"`, `"Usuario Desbaneado"`, `"Usuario Eliminado"`, `"Cambio de Rol"`.
+</ResponseField>
+
+<ResponseField name="details" type="string" required>
+  A full sentence describing what happened. Includes the affected user's email, the duration of a ban, the motivo (reason), or the new role assigned. Intended for display in the admin UI without further parsing.
+</ResponseField>
+
+<ResponseField name="user" type="string" default="Sistema">
+  The `nombre` or `email` of the admin who performed the action, taken from `req.usuario` at the time of the call. Defaults to `"Sistema"` for programmatically triggered events.
+</ResponseField>
+
+<ResponseField name="createdAt" type="Date">
+  UTC timestamp of when the log was created. Also serves as the TTL index field — the document is automatically deleted 7 days after this value.
+</ResponseField>
+
+---
+
+## The `auditLogger` Utility
+
+All audit log creation is centralised in `backend/utils/auditLogger.js` through a single exported function: `createAuditLog`. Centralising log creation ensures consistent formatting across all admin controllers and guarantees that real-time notifications are always sent alongside the database write.
+
+```javascript
+// backend/utils/auditLogger.js
+export const createAuditLog = async (app, logData) => {
+    try {
+        const log = await AuditLog.create(logData);
+
+        // Notify connected admins via socket so their panel refreshes live
+        const io = app.get('io');
+        if (io) {
+            io.to('admins').emit('admin:audit_update', log);
+        }
+
+        return log;
+    } catch (error) {
+        console.error('❌ Error al crear AuditLog:', error);
+    }
+};
+```
+
+**Parameters passed to `createAuditLog`:**
+
+<ParamField body="app" type="Express app" required>
+  The Express application instance (`req.app`). Used to retrieve the Socket.io `io` object via `app.get('io')`.
+</ParamField>
+
+<ParamField body="logData.type" type="string" required>
+  Machine-readable event category: `ban`, `unban`, `delete`, `role_change`.
+</ParamField>
+
+<ParamField body="logData.action" type="string" required>
+  Short human-readable label.
+</ParamField>
+
+<ParamField body="logData.details" type="string" required>
+  Full sentence description of the event.
+</ParamField>
+
+<ParamField body="logData.user" type="string">
+  Performing admin's name or email (`req.usuario.nombre || req.usuario.email`).
+</ParamField>
+
+---
+
+## Actions That Trigger Audit Logs
+
+The following operations in `adminController.js` call `createAuditLog` automatically:
+
+| Controller Action | `type` | `action` | `details` template |
+|---|---|---|---|
+| Ban a user | `ban` | `"Usuario Baneado"` | `"<email> baneado por <N> días. Motivo: <motivo>"` |
+| Unban a user | `unban` | `"Usuario Desbaneado"` | `"<email> ha sido desbaneado"` |
+| Delete a user | `delete` | `"Usuario Eliminado"` | `"Cuenta eliminada: <email>"` |
+| Change a user's role | `role_change` | `"Cambio de Rol"` | `"Rol de <email> cambiado a \"<rol>\""` |
+
+---
+
+## API Endpoints
+
+### Read Audit Logs
+
+Returns the 50 most recent audit log entries sorted by `createdAt` descending. Accessible to both `admin` and `superadmin` roles.
+
+```http
+GET /api/admin/audit
+Authorization: Bearer <token>
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "logs": [
+    {
+      "_id": "66c3d4e5f6a7b8c9d0e1f2a3",
+      "type": "ban",
+      "action": "Usuario Baneado",
+      "details": "carlos@example.com baneado por 7 días. Motivo: Lenguaje ofensivo en el chat",
+      "user": "Valeria Ospina",
+      "createdAt": "2024-11-10T15:42:00.000Z"
+    },
+    {
+      "_id": "66c3d4e5f6a7b8c9d0e1f2b4",
+      "type": "role_change",
+      "action": "Cambio de Rol",
+      "details": "Rol de diana@example.com cambiado a \"admin\"",
+      "user": "superadmin@eco-it.co",
+      "createdAt": "2024-11-09T11:20:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### Delete a Single Log Entry
+
+Permanently removes one audit log document by its MongoDB `_id`. **Superadmin only.**
+
+```http
+DELETE /api/admin/audit/:id
+Authorization: Bearer <superadmin_token>
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "mensaje": "Registro eliminado de la base de datos"
+}
+```
+
+---
+
+### Delete All Audit Logs
+
+Calls `AuditLog.deleteMany({})` to wipe the entire audit log collection. **Superadmin only.**
+
+```http
+DELETE /api/admin/audit/all
+Authorization: Bearer <superadmin_token>
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "mensaje": "Todos los registros eliminados de la base de datos"
+}
+```
+
+<Warning>
+  **This action is irreversible.** Deleting all audit logs permanently destroys the entire administrative history of the platform. There is no confirmation prompt from the API — the operation executes immediately. This endpoint should be used with extreme caution, typically only when complying with a data retention policy that requires deletion before the 7-day TTL expires naturally.
+</Warning>
+
+---
+
+## Example Audit Log JSON Object
+
+The following is a complete example of an audit log document as returned by `GET /api/admin/audit`:
+
+```json
+{
+  "_id": "66c3d4e5f6a7b8c9d0e1f2a3",
+  "type": "ban",
+  "action": "Usuario Baneado",
+  "details": "carlos.rodriguez@example.com baneado por 14 días. Motivo: Publicación de imágenes inapropiadas reiterada",
+  "user": "Valeria Ospina",
+  "createdAt": "2024-11-10T15:42:33.811Z",
+  "__v": 0
+}
+```
+
+---
+
+## Real-Time Delivery
+
+Every time `createAuditLog` writes a new entry to MongoDB, it immediately emits the `admin:audit_update` Socket.io event to the `admins` room, passing the full log document as the payload. Any admin currently viewing the Audit Logs section of the panel receives the new entry instantly without polling or refreshing.
+
+```javascript
+// Emitted by auditLogger.js after every successful AuditLog.create()
+io.to('admins').emit('admin:audit_update', log);
+```
+
+The frontend can listen for this event to prepend the new entry to the displayed list:
+
+```javascript
+socket.on('admin:audit_update', (newLog) => {
+  setLogs((prev) => [newLog, ...prev].slice(0, 50));
+});
+```
+
+<Tip>
+  Because audit logs are emitted over the `admins` Socket.io room, only users currently authenticated with an admin or superadmin role will receive them. Regular users in the `users` room cannot see audit events.
+</Tip>

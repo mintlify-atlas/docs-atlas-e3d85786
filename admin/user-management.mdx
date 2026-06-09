@@ -1,0 +1,285 @@
+---
+title: "User Management in the Eco-It Admin Panel"
+sidebarTitle: "User Management"
+description: "List, search, ban, unban, delete, and change roles for all registered Eco-It users using the admin API endpoints."
+---
+
+The Eco-It user management system gives administrators complete visibility and control over every registered account. Admins can list all users, search and filter by role or status, apply temporary bans, lift bans early, and delete accounts entirely. Role promotion and demotion are reserved exclusively for superadmins. All write operations emit real-time Socket.io events so that affected users — and other connected admins — are notified instantly.
+
+<Warning>
+  Role changes (`PATCH /api/admin/users/:id/role`) are protected by the `soloSuperadmin` middleware and will return `403 Forbidden` for `admin`-role callers. Admins may only ban, unban, and delete users whose role is `user`. An admin cannot act on another admin or on a superadmin account.
+</Warning>
+
+## User Model Fields
+
+The following fields from the `User` model are most relevant to admin operations. Sensitive fields such as `password`, `resetPasswordToken`, and `resetPasswordExpires` are stripped from all admin API responses.
+
+<ResponseField name="nombre" type="string" required>
+  The user's first name.
+</ResponseField>
+
+<ResponseField name="apellido" type="string">
+  The user's last name. Required for locally registered accounts; optional for Google OAuth accounts.
+</ResponseField>
+
+<ResponseField name="email" type="string" required>
+  Unique, lowercase email address. Used as the primary identifier in audit log entries.
+</ResponseField>
+
+<ResponseField name="rol" type="string">
+  One of `user`, `admin`, or `superadmin`. Defaults to `user` on registration.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  One of `active`, `inactive`, or `banned`. Defaults to `active`.
+</ResponseField>
+
+<ResponseField name="banHasta" type="Date | null">
+  The UTC datetime at which the ban expires. `null` when the user is not banned. The `verificarToken` middleware automatically lifts an expired ban on the next login attempt.
+</ResponseField>
+
+<ResponseField name="banReason" type="string | null">
+  Human-readable reason stored at ban time. `null` when the user is not banned.
+</ResponseField>
+
+<ResponseField name="ultimaConexion" type="Date | null">
+  Timestamp of the user's most recent socket connection. Useful for identifying inactive accounts.
+</ResponseField>
+
+<ResponseField name="puntos" type="number">
+  Eco-It gamification points accumulated by the user. Displayed as a progress bar in the admin Users table.
+</ResponseField>
+
+<ResponseField name="isOnline" type="boolean">
+  Virtual field appended by the API response. `true` if the user's ID is present in the live `usuariosConectados` Map.
+</ResponseField>
+
+---
+
+## API Endpoints
+
+### List All Users
+
+Returns an array of all registered users sorted by `createdAt` descending, with sensitive fields omitted. Each user object includes the virtual `isOnline` flag derived from the live socket connections map.
+
+```http
+GET /api/admin/usuarios
+Authorization: Bearer <token>
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "usuarios": [
+    {
+      "_id": "664f1a2b3c4d5e6f7a8b9c0d",
+      "nombre": "Valentina",
+      "apellido": "Torres",
+      "email": "valentina@example.com",
+      "rol": "user",
+      "status": "active",
+      "banHasta": null,
+      "banReason": null,
+      "puntos": 340,
+      "ultimaConexion": "2024-11-01T14:22:00.000Z",
+      "isOnline": true,
+      "createdAt": "2024-09-15T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### Platform Statistics
+
+Returns KPI totals and time-series chart data used by the admin Dashboard. Runs multiple MongoDB aggregations in parallel to minimize latency.
+
+```http
+GET /api/admin/stats
+Authorization: Bearer <token>
+```
+
+**Response fields:**
+
+<ResponseField name="totalUsuarios" type="number">
+  Total registered user count.
+</ResponseField>
+
+<ResponseField name="usuariosOnline" type="number">
+  Real-time count of users with at least one active socket connection.
+</ResponseField>
+
+<ResponseField name="consultasHoy" type="number">
+  Number of EcoBot (AI) queries sent today by regular users.
+</ResponseField>
+
+<ResponseField name="nuevosHoy" type="number">
+  New accounts created since midnight of the current day.
+</ResponseField>
+
+<ResponseField name="totalPuntos" type="number">
+  Sum of `puntos` across all user documents.
+</ResponseField>
+
+<ResponseField name="chartData" type="object">
+  Time-series arrays for charting: `users`, `queries`, `usersMonth`, `queriesMonth`, `usersWeek`, `queriesWeek`. Each array contains objects with `{ label, value }`.
+</ResponseField>
+
+---
+
+### Ban a User
+
+Sets `status` to `"banned"`, computes the `banHasta` expiry date, and stores the `banReason`. Emits `admin:usuario_baneado` to the `admins` Socket.io room and `user:banned` directly to the affected user's socket(s). Also creates a `Notification` document visible to all admins.
+
+```http
+PATCH /api/admin/users/:id/ban
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+**Request body:**
+
+<ParamField body="dias" type="number" default="7">
+  Number of days the ban should last. Must be a positive integer (1–365 recommended).
+</ParamField>
+
+<ParamField body="motivo" type="string" default="Incumplimiento de las normas">
+  Human-readable reason for the ban. Stored in `banReason` and included in audit log details.
+</ParamField>
+
+**Example:**
+
+```bash
+curl -X PATCH https://api.eco-it.co/api/admin/users/664f1a2b3c4d5e6f7a8b9c0d/ban \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "dias": 14, "motivo": "Publicación de contenido inapropiado reiterado" }'
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "message": "Usuario baneado por 14 días",
+  "usuario": {
+    "_id": "664f1a2b3c4d5e6f7a8b9c0d",
+    "status": "banned",
+    "banHasta": "2024-11-15T10:30:00.000Z",
+    "banReason": "Publicación de contenido inapropiado reiterado"
+  }
+}
+```
+
+<Note>
+  An admin cannot ban themselves (`req.usuario.id === id` returns `400`) or ban another admin or superadmin. The ban check also applies in the `verificarToken` middleware: if `banHasta` has passed by the time the user next authenticates, the ban is lifted automatically and the user regains access.
+</Note>
+
+---
+
+### Unban a User
+
+Resets `status` to `"active"` and sets `banHasta` to `null`. Emits `user:unbanned` to the affected user's socket(s) for an immediate in-app notification.
+
+```http
+PATCH /api/admin/users/:id/unban
+Authorization: Bearer <token>
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "message": "Usuario desbaneado exitosamente",
+  "usuario": {
+    "_id": "664f1a2b3c4d5e6f7a8b9c0d",
+    "status": "active",
+    "banHasta": null
+  }
+}
+```
+
+---
+
+### Delete a User
+
+Permanently removes the user document from MongoDB via `findByIdAndDelete`. Creates an audit log entry recording the deleted email. An admin cannot delete their own account or a superadmin account.
+
+```http
+DELETE /api/admin/users/:id
+Authorization: Bearer <token>
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "message": "Usuario eliminado exitosamente"
+}
+```
+
+---
+
+### Change a User's Role
+
+Promotes or demotes a user between `"user"` and `"admin"`. Superadmin-only. After the database update, the backend synchronises the user's live socket room membership — joining or leaving the `admins` Socket.io room — so the change takes effect without requiring the affected user to log out.
+
+```http
+PATCH /api/admin/users/:id/role
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+<ParamField body="rol" type="string" required>
+  The new role. Must be one of `"user"` or `"admin"`. Passing `"superadmin"` is explicitly rejected with `400`.
+</ParamField>
+
+**Example:**
+
+```bash
+curl -X PATCH https://api.eco-it.co/api/admin/users/664f1a2b3c4d5e6f7a8b9c0d/role \
+  -H "Authorization: Bearer $SUPERADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "rol": "admin" }'
+```
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "mensaje": "El rol del usuario ha sido cambiado a admin",
+  "usuario": {
+    "_id": "664f1a2b3c4d5e6f7a8b9c0d",
+    "email": "valentina@example.com",
+    "rol": "admin"
+  }
+}
+```
+
+**Rejection cases:**
+
+| Condition | HTTP Status | Message |
+|---|---|---|
+| Caller is not superadmin | `403` | `"Acceso denegado: se requiere rol superadmin"` |
+| Targeting own account | `400` | `"No puedes cambiar tu propio rol"` |
+| Target is a superadmin | `403` | `"No puedes modificar a otro superadmin"` |
+| `rol` is `"superadmin"` | `400` | `"No tienes permisos para crear otro superadmin"` |
+| Invalid rol value | `400` | `"Rol inválido"` |
+
+---
+
+## Frontend Filtering
+
+The `AdminUsers` React component (`adminUsers.jsx`) supports client-side filtering on the already-fetched user list. No additional API calls are made when filters change.
+
+- **Search**: matches against full name (`nombre + apellido`) and `email` (case-insensitive).
+- **Role filter**: dropdown for `all`, `user`, `admin`, `superadmin`.
+- **Status filter**: `all`, `active` (online), `inactive` (offline, not banned), `banned`.
+
+The online/offline computed status derives from the `isOnline` field returned by the API and updates in real time via the `usuario:estado` socket event.
